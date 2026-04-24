@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Account } from "../src/assets/type/domain/common.ts";
 import {
+	detectSharedResetEpoch,
 	rankAccounts,
 	recordTransientError,
 	selectAccount,
@@ -57,5 +58,38 @@ describe("balancer", () => {
 			ranked.map((item) => item.id),
 			["d", "c", "b", "a"],
 		);
+	});
+
+	it("excludes cooled accounts when excludeCooled option is set", () => {
+		const cooled = recordTransientError(account("a", 1), 100);
+		const ranked = rankAccounts([cooled, account("b", 90)], 101, {
+			excludeCooled: true,
+		});
+		assert.deepEqual(
+			ranked.map((item) => item.id),
+			["b"],
+		);
+	});
+});
+
+describe("detectSharedResetEpoch", () => {
+	it("returns null when fewer than two epochs are given", () => {
+		assert.equal(detectSharedResetEpoch([1_777_057_806]), null);
+		assert.equal(detectSharedResetEpoch([]), null);
+	});
+
+	it("returns the shared epoch when all values agree within tolerance", () => {
+		assert.equal(
+			detectSharedResetEpoch([1_777_057_806, 1_777_057_806, 1_777_057_806]),
+			1_777_057_806,
+		);
+		assert.equal(
+			detectSharedResetEpoch([1_777_057_806, 1_777_057_807], 2),
+			1_777_057_807,
+		);
+	});
+
+	it("returns null when epochs diverge beyond tolerance", () => {
+		assert.equal(detectSharedResetEpoch([1_777_057_806, 1_777_061_406]), null);
 	});
 });

@@ -14,6 +14,7 @@ import type {
 import type { Store } from "../repositories/store.ts";
 import { ensureFreshAccount, RefreshError } from "./auth.ts";
 import {
+	detectSharedResetEpoch,
 	markRateLimited,
 	rankAccounts,
 	recordSuccess,
@@ -36,13 +37,18 @@ type AttemptSuccess = {
 
 type RaceOutcome =
 	| { kind: "winner"; winner: AttemptSuccess }
-	| { kind: "exhausted"; lastRateLimit: RateLimitInfo | null };
+	| {
+			kind: "exhausted";
+			lastRateLimit: RateLimitInfo | null;
+			resetEpochs: number[];
+	  };
 
 type RateLimitInfo = {
 	status: number;
 	headers: Headers;
 	body: Buffer;
 	retryAfterSeconds: number;
+	resetAtEpoch: number | null;
 };
 
 // Token decryption cache: one entry per account, invalidated when the stored
@@ -69,6 +75,18 @@ export async function proxyRequest(
 		return;
 	}
 
+	if (ctx.settings.globalCooldownEnabled) {
+		const shortCircuit = await shortCircuitGlobalCooldown(ctx);
+		if (shortCircuit !== null) {
+			writeJson(res, 429, shortCircuit.payload);
+			ctx.logger.warn("proxy.global_cooldown_short_circuit", {
+				retryAfterSeconds: shortCircuit.retryAfterSeconds,
+				reason: shortCircuit.reason,
+			});
+			return;
+		}
+	}
+
 	const accounts = await ctx.store.listAccounts();
 	const candidates = rankAccounts(accounts);
 	const best = candidates[0] ?? null;
@@ -92,6 +110,7 @@ export async function proxyRequest(
 	const body = await readBody(req);
 	let lastRateLimit: RateLimitInfo | null = null;
 	let lastError: unknown = null;
+	const resetEpochs: number[] = [];
 
 	const remaining = candidates.slice(1);
 	ctx.logger.info("proxy.account_selected", {
@@ -108,6 +127,9 @@ export async function proxyRequest(
 				markRateLimited(outcome.account, info.retryAfterSeconds),
 			);
 			lastRateLimit = info;
+			if (info.resetAtEpoch !== null) {
+				resetEpochs.push(info.resetAtEpoch);
+			}
 			ctx.logger.warn("proxy.upstream_rate_limited", {
 				accountId: outcome.account.id,
 				retryAfterSeconds: info.retryAfterSeconds,
@@ -148,9 +170,13 @@ export async function proxyRequest(
 		if (race.lastRateLimit !== null) {
 			lastRateLimit = race.lastRateLimit;
 		}
+		for (const epoch of race.resetEpochs) {
+			resetEpochs.push(epoch);
+		}
 	}
 
 	if (lastRateLimit !== null) {
+		await maybeRecordGlobalCooldown(resetEpochs, ctx);
 		ctx.logger.warn("proxy.all_accounts_rate_limited", {
 			retryAfterSeconds: lastRateLimit.retryAfterSeconds,
 		});
@@ -168,6 +194,63 @@ export async function proxyRequest(
 			"server_error",
 		),
 	);
+}
+
+// 1-0. Global cooldown short-circuit ―――――――――――――――――――――――――――――――――――――
+async function shortCircuitGlobalCooldown(ctx: ProxyContext): Promise<{
+	payload: ProxyErrorPayload;
+	retryAfterSeconds: number;
+	reason: string;
+} | null> {
+	const meta = await ctx.store.getMeta();
+	if (meta.globalCooldownUntil === null) {
+		return null;
+	}
+	const nowSeconds = Date.now() / 1000;
+	if (meta.globalCooldownUntil <= nowSeconds) {
+		await ctx.store.setMeta({
+			globalCooldownUntil: null,
+			globalCooldownReason: null,
+		});
+		return null;
+	}
+	const retryAfterSeconds = Math.max(
+		1,
+		Math.floor(meta.globalCooldownUntil - nowSeconds),
+	);
+	return {
+		payload: {
+			error: {
+				code: "usage_limit_reached",
+				message: `Shared account quota cooldown active for ${retryAfterSeconds}s`,
+				type: "rate_limit_error",
+			},
+		},
+		retryAfterSeconds,
+		reason: meta.globalCooldownReason ?? "shared_reset_epoch",
+	};
+}
+
+// 1-0-1. Global cooldown record ――――――――――――――――――――――――――――――――――――――――
+async function maybeRecordGlobalCooldown(
+	resetEpochs: number[],
+	ctx: ProxyContext,
+): Promise<void> {
+	if (!ctx.settings.globalCooldownEnabled) {
+		return;
+	}
+	const shared = detectSharedResetEpoch(resetEpochs);
+	if (shared === null) {
+		return;
+	}
+	await ctx.store.setMeta({
+		globalCooldownUntil: shared,
+		globalCooldownReason: "shared_reset_epoch_detected",
+	});
+	ctx.logger.warn("proxy.global_cooldown_recorded", {
+		globalCooldownUntil: shared,
+		observedAccounts: resetEpochs.length,
+	});
 }
 
 // 1-1. Attempt a single account (401 auto-refresh) ――――――――――――――――――――――――
@@ -199,6 +282,9 @@ async function attemptAccount(
 }
 
 // 1-2. Parallel race across accounts ――――――――――――――――――――――――――――――――――――――
+// 계정 간 동시 타격으로 OpenAI의 abuse-detection(동일 IP·계정 스위칭)이
+// 가속되는 현상을 완화하기 위해 동시성 N + staggered 지연으로 전환한다.
+// "모든 계정 시도 보장" 계약은 유지하므로 최종적으로 모두 시도된다.
 async function raceAccounts(
 	accounts: Account[],
 	req: IncomingMessage,
@@ -206,14 +292,28 @@ async function raceAccounts(
 	ctx: ProxyContext,
 ): Promise<RaceOutcome> {
 	const controllers = accounts.map(() => new AbortController());
+	const concurrencyLimit = Math.max(
+		1,
+		Math.min(ctx.settings.parallelConcurrency, accounts.length),
+	);
+	const staggerMs = Math.max(0, ctx.settings.parallelStaggerMs);
 	let settled = 0;
+	let launched = 0;
 	let done = false;
 	let lastRateLimit: RateLimitInfo | null = null;
+	const resetEpochs: number[] = [];
 
 	return await new Promise<RaceOutcome>((resolve) => {
-		accounts.forEach((account, index) => {
+		const launch = (index: number): void => {
+			if (done || index >= accounts.length) {
+				return;
+			}
+			const account = accounts[index];
 			const controller = controllers[index];
-			const signal = controller?.signal ?? new AbortController().signal;
+			if (account === undefined || controller === undefined) {
+				return;
+			}
+			const signal = controller.signal;
 			ctx.logger.info("proxy.account_selected", {
 				accountId: account.id,
 				usedPercent: account.usedPercent,
@@ -229,6 +329,9 @@ async function raceAccounts(
 					if (outcome.response.status === 429) {
 						const info = await readRateLimit(outcome.response);
 						lastRateLimit = info;
+						if (info.resetAtEpoch !== null) {
+							resetEpochs.push(info.resetAtEpoch);
+						}
 						await ctx.store.upsertAccount(
 							markRateLimited(outcome.account, info.retryAfterSeconds),
 						);
@@ -263,12 +366,32 @@ async function raceAccounts(
 				})
 				.finally(() => {
 					settled += 1;
-					if (!done && settled === accounts.length) {
+					if (done) {
+						return;
+					}
+					if (launched < accounts.length) {
+						launch(launched);
+						launched += 1;
+					} else if (settled === accounts.length) {
 						done = true;
-						resolve({ kind: "exhausted", lastRateLimit });
+						resolve({ kind: "exhausted", lastRateLimit, resetEpochs });
 					}
 				});
-		});
+		};
+
+		const initial = Math.min(concurrencyLimit, accounts.length);
+		for (let i = 0; i < initial; i += 1) {
+			if (i === 0 || staggerMs === 0) {
+				launch(i);
+			} else {
+				setTimeout(() => {
+					if (!done) {
+						launch(i);
+					}
+				}, staggerMs * i);
+			}
+		}
+		launched = initial;
 	});
 }
 
@@ -312,6 +435,7 @@ async function discardBody(response: Response): Promise<void> {
 async function readRateLimit(response: Response): Promise<RateLimitInfo> {
 	const body = Buffer.from(await response.arrayBuffer());
 	let retryAfterSeconds = 0;
+	let resetAtEpoch: number | null = null;
 	const retryHeader = response.headers.get("retry-after");
 	if (retryHeader !== null) {
 		const seconds = Number.parseInt(retryHeader, 10);
@@ -327,56 +451,59 @@ async function readRateLimit(response: Response): Promise<RateLimitInfo> {
 			}
 		}
 	}
-	if (retryAfterSeconds === 0) {
-		try {
-			const parsed = JSON.parse(body.toString("utf8")) as {
-				error?: {
-					resets_in_seconds?: number;
-					resets_at?: number;
+	try {
+		const parsed = JSON.parse(body.toString("utf8")) as {
+			error?: {
+				resets_in_seconds?: number;
+				resets_at?: number;
+			} | null;
+			rate_limit?: {
+				primary_window?: {
+					reset_after_seconds?: number;
+					reset_at?: number;
 				} | null;
-				rate_limit?: {
-					primary_window?: {
-						reset_after_seconds?: number;
-						reset_at?: number;
-					} | null;
-					secondary_window?: {
-						reset_after_seconds?: number;
-						reset_at?: number;
-					} | null;
+				secondary_window?: {
+					reset_after_seconds?: number;
+					reset_at?: number;
 				} | null;
-			};
-			const codexResets = parsed.error?.resets_in_seconds;
-			const codexResetsAt = parsed.error?.resets_at;
-			const primary = parsed.rate_limit?.primary_window;
-			const secondary = parsed.rate_limit?.secondary_window;
-			const seconds =
-				codexResets ??
-				primary?.reset_after_seconds ??
-				secondary?.reset_after_seconds;
-			if (typeof seconds === "number" && seconds > 0) {
-				retryAfterSeconds = Math.floor(seconds);
-			} else {
-				const resetAt =
-					codexResetsAt ?? primary?.reset_at ?? secondary?.reset_at;
-				if (typeof resetAt === "number") {
-					retryAfterSeconds = Math.max(
-						0,
-						Math.floor(resetAt - Date.now() / 1000),
-					);
-				}
-			}
-		} catch {
-			// body is not structured JSON with rate_limit info
+			} | null;
+		};
+		const codexResets = parsed.error?.resets_in_seconds;
+		const codexResetsAt = parsed.error?.resets_at;
+		const primary = parsed.rate_limit?.primary_window;
+		const secondary = parsed.rate_limit?.secondary_window;
+		const seconds =
+			codexResets ??
+			primary?.reset_after_seconds ??
+			secondary?.reset_after_seconds;
+		if (retryAfterSeconds === 0 && typeof seconds === "number" && seconds > 0) {
+			retryAfterSeconds = Math.floor(seconds);
 		}
+		const resetAt = codexResetsAt ?? primary?.reset_at ?? secondary?.reset_at;
+		if (typeof resetAt === "number" && Number.isFinite(resetAt)) {
+			resetAtEpoch = Math.floor(resetAt);
+			if (retryAfterSeconds === 0) {
+				retryAfterSeconds = Math.max(
+					0,
+					Math.floor(resetAt - Date.now() / 1000),
+				);
+			}
+		}
+	} catch {
+		// body is not structured JSON with rate_limit info
 	}
 	if (retryAfterSeconds === 0) {
 		retryAfterSeconds = 3600;
+	}
+	if (resetAtEpoch === null) {
+		resetAtEpoch = Math.floor(Date.now() / 1000) + retryAfterSeconds;
 	}
 	return {
 		status: response.status,
 		headers: response.headers,
 		body,
 		retryAfterSeconds,
+		resetAtEpoch,
 	};
 }
 

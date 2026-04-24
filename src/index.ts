@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ensureEncryptionKey, loadSettings } from "./assets/scripts/config.ts";
@@ -5,6 +7,7 @@ import { createLogger, errorContext } from "./assets/scripts/logger.ts";
 import { createStore } from "./repositories/store.ts";
 import { createLoadBalancerServer } from "./routers/server.ts";
 import { importCodexAuthDirectory } from "./services/codex-auth.ts";
+import { startUsagePolling } from "./services/usage.ts";
 
 // 0. File sink ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function createTeeSink(filePath: string) {
@@ -83,6 +86,10 @@ async function main(): Promise<void> {
 		logger.info("server.listening", {
 			url: `http://${settings.host}:${settings.port}`,
 		});
+	});
+	startUsagePolling(store, settings, encryptionKey, logger);
+	logger.info("usage_poll.scheduled", {
+		intervalSeconds: settings.usagePollIntervalSeconds,
 	});
 }
 

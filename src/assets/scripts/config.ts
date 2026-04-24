@@ -20,6 +20,10 @@ export type Settings = {
 	apiKeyAuthEnabled: boolean;
 	codexAuthDir: string | null;
 	logLevel: LogLevel;
+	parallelConcurrency: number;
+	parallelStaggerMs: number;
+	globalCooldownEnabled: boolean;
+	usagePollIntervalSeconds: number;
 };
 
 // 1. Settings load ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
@@ -61,6 +65,16 @@ export function loadSettings(): Settings {
 		apiKeyAuthEnabled: readBoolEnv("CODEX_LB_API_KEY_AUTH_ENABLED", false),
 		codexAuthDir: codexAuthDir === null ? null : expandPath(codexAuthDir),
 		logLevel: parseLogLevel(readOptionalEnv("CODEX_LB_LOG_LEVEL"), "info"),
+		parallelConcurrency: readIntEnv("CODEX_LB_PARALLEL_CONCURRENCY", 2),
+		parallelStaggerMs: readIntEnv("CODEX_LB_PARALLEL_STAGGER_MS", 150),
+		globalCooldownEnabled: readBoolEnv(
+			"CODEX_LB_GLOBAL_COOLDOWN_ENABLED",
+			true,
+		),
+		usagePollIntervalSeconds: readIntEnv(
+			"CODEX_LB_USAGE_POLL_INTERVAL_SECONDS",
+			900,
+		),
 	};
 }
 

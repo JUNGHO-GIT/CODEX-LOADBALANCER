@@ -5,6 +5,10 @@ export type SelectionResult = {
 	message: string | null;
 };
 
+export type RankOptions = {
+	excludeCooled?: boolean;
+};
+
 // 1. Account select ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export function selectAccount(
 	accounts: Account[],
@@ -25,10 +29,40 @@ export function selectAccount(
 export function rankAccounts(
 	accounts: Account[],
 	now: number = Date.now() / 1000,
+	options: RankOptions = {},
 ): Account[] {
-	return accounts
+	const base = accounts
 		.filter(isAvailable)
 		.toSorted((a, b) => compareAccount(a, b, now));
+	if (options.excludeCooled !== true) {
+		return base;
+	}
+	const fresh = base.filter((account) => (account.cooldownUntil ?? 0) <= now);
+	return fresh;
+}
+
+// 1-2. Shared reset epoch detect ―――――――――――――――――――――――――――――――――――――――――
+// OpenAI가 여러 ChatGPT 계정을 device/IP 기준으로 묶어 throttle할 때, 반환되는
+// resets_at이 모든 계정에서 ms 단위로 동일해지는 패턴을 감지한다.
+// 허용 오차를 두어 epoch가 근사하면 같은 윈도로 취급한다.
+export function detectSharedResetEpoch(
+	epochs: number[],
+	toleranceSeconds = 1,
+): number | null {
+	const finite = epochs.filter(
+		(value): value is number =>
+			typeof value === "number" && Number.isFinite(value) && value > 0,
+	);
+	if (finite.length < 2) {
+		return null;
+	}
+	const sorted = [...finite].toSorted((a, b) => a - b);
+	const first = sorted[0] ?? 0;
+	const last = sorted[sorted.length - 1] ?? 0;
+	if (last - first > toleranceSeconds) {
+		return null;
+	}
+	return Math.floor(last);
 }
 
 // 2. Error record ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――

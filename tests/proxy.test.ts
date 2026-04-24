@@ -152,6 +152,81 @@ describe("proxy", () => {
 		}
 	});
 
+	it("short-circuits when global cooldown is active and shared reset is detected", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			const sharedResetAt = Math.floor(Date.now() / 1000) + 11_749;
+			let upstreamHits = 0;
+			const upstream = createServer((_req, res) => {
+				upstreamHits += 1;
+				res.writeHead(429, { "content-type": "application/json" });
+				res.end(
+					JSON.stringify({
+						error: {
+							type: "usage_limit_reached",
+							resets_at: sharedResetAt,
+							resets_in_seconds: 11_749,
+						},
+					}),
+				);
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount(testAccount("account-a", "a-token", key));
+			await store.upsertAccount(testAccount("account-b", "b-token", key));
+			await store.upsertAccount(testAccount("account-c", "c-token", key));
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort, {
+					globalCooldownEnabled: true,
+				}),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const first = await fetch(
+				`http://127.0.0.1:${port}/backend-api/codex/responses`,
+				{
+					method: "POST",
+					headers: { connection: "close" },
+					body: JSON.stringify({ input: "hello" }),
+				},
+			);
+			assert.equal(first.status, 429);
+			assert.ok(upstreamHits >= 2);
+			const hitsAfterFirst = upstreamHits;
+
+			const meta = await store.getMeta();
+			assert.equal(meta.globalCooldownUntil, sharedResetAt);
+			assert.equal(meta.globalCooldownReason, "shared_reset_epoch_detected");
+
+			const second = await fetch(
+				`http://127.0.0.1:${port}/backend-api/codex/responses`,
+				{
+					method: "POST",
+					headers: { connection: "close" },
+					body: JSON.stringify({ input: "hello" }),
+				},
+			);
+			const body = (await second.json()) as {
+				error?: { code?: string };
+			};
+			assert.equal(second.status, 429);
+			assert.equal(body.error?.code, "usage_limit_reached");
+			assert.equal(upstreamHits, hitsAfterFirst);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("records every account when parallel attempts are rate limited", async () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
@@ -251,6 +326,7 @@ function settings(
 	root: string,
 	upstreamPort: number,
 	authPort: number,
+	overrides: Partial<Settings> = {},
 ): Settings {
 	return {
 		host: "127.0.0.1",
@@ -268,6 +344,11 @@ function settings(
 		apiKeyAuthEnabled: false,
 		codexAuthDir: null,
 		logLevel: "silent",
+		parallelConcurrency: 4,
+		parallelStaggerMs: 0,
+		globalCooldownEnabled: false,
+		usagePollIntervalSeconds: 900,
+		...overrides,
 	};
 }
 

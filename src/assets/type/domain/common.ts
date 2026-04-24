@@ -34,9 +34,15 @@ export type ApiKey = {
 	assignedAccountIds: string[];
 };
 
+export type StoreMeta = {
+	globalCooldownUntil: number | null;
+	globalCooldownReason: string | null;
+};
+
 export type StoreData = {
 	accounts: Account[];
 	apiKeys: ApiKey[];
+	meta: StoreMeta;
 };
 
 export type TokenRefreshResult = {

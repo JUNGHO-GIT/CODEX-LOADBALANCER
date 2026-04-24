@@ -4,6 +4,7 @@ import type {
 	Account,
 	ApiKey,
 	StoreData,
+	StoreMeta,
 } from "../assets/type/domain/common.ts";
 
 export type Store = {
@@ -13,6 +14,8 @@ export type Store = {
 	listAccounts(): Promise<Account[]>;
 	upsertAccount(account: Account): Promise<Account>;
 	listApiKeys(): Promise<ApiKey[]>;
+	getMeta(): Promise<StoreMeta>;
+	setMeta(meta: StoreMeta): Promise<StoreMeta>;
 	flush(): Promise<void>;
 };
 
@@ -96,6 +99,16 @@ export function createStore(path: string): Store {
 			const data = await hydrate();
 			return data.apiKeys;
 		},
+		getMeta: async () => {
+			const data = await hydrate();
+			return { ...data.meta };
+		},
+		setMeta: async (meta: StoreMeta) => {
+			const data = await hydrate();
+			data.meta = { ...meta };
+			scheduleFlush();
+			return { ...data.meta };
+		},
 		flush: async () => {
 			if (flushTimer !== null) {
 				clearTimeout(flushTimer);
@@ -115,10 +128,33 @@ async function readStore(path: string): Promise<StoreData> {
 		return {
 			accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
 			apiKeys: Array.isArray(parsed.apiKeys) ? parsed.apiKeys : [],
+			meta: normalizeMeta(parsed.meta),
 		};
 	} catch {
-		return { accounts: [], apiKeys: [] };
+		return { accounts: [], apiKeys: [], meta: emptyMeta() };
 	}
+}
+
+// 2-1. Meta normalize ―――――――――――――――――――――――――――――――――――――――――――――――――――――
+function normalizeMeta(meta: Partial<StoreMeta> | undefined): StoreMeta {
+	if (meta === undefined || meta === null) {
+		return emptyMeta();
+	}
+	const until =
+		typeof meta.globalCooldownUntil === "number" &&
+		Number.isFinite(meta.globalCooldownUntil)
+			? meta.globalCooldownUntil
+			: null;
+	const reason =
+		typeof meta.globalCooldownReason === "string"
+			? meta.globalCooldownReason
+			: null;
+	return { globalCooldownUntil: until, globalCooldownReason: reason };
+}
+
+// 2-2. Empty meta
+function emptyMeta(): StoreMeta {
+	return { globalCooldownUntil: null, globalCooldownReason: null };
 }
 
 // 3. Store write ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
@@ -134,5 +170,6 @@ function cloneData(data: StoreData): StoreData {
 	return {
 		accounts: data.accounts.map((account) => ({ ...account })),
 		apiKeys: data.apiKeys.map((key) => ({ ...key })),
+		meta: { ...data.meta },
 	};
 }
