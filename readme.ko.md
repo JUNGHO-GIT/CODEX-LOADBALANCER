@@ -44,7 +44,7 @@ bun start
 기본 서버:
 
 ```text
-http://127.0.0.1:5555
+http://127.0.0.1:58557
 ```
 
 ## 빠른 시작
@@ -65,8 +65,8 @@ bunx codex-loadbalancer
 Codex/OpenAI 호환 클라이언트는 다음 route 계열 중 하나를 사용합니다.
 
 ```text
-http://127.0.0.1:5555/backend-api/codex
-http://127.0.0.1:5555/v1
+http://127.0.0.1:58557/backend-api/codex
+http://127.0.0.1:58557/v1
 ```
 
 프록시는 prefix 뒤의 요청 path를 유지하고 선택된 계정 access token으로 upstream에 전달합니다.
@@ -76,13 +76,13 @@ http://127.0.0.1:5555/v1
 가져온 계정 조회:
 
 ```bash
-curl http://127.0.0.1:5555/api/accounts
+curl http://127.0.0.1:58557/api/accounts
 ```
 
 계정 수동 생성 또는 갱신:
 
 ```bash
-curl -X POST http://127.0.0.1:5555/api/accounts \
+curl -X POST http://127.0.0.1:58557/api/accounts \
   -H "content-type: application/json" \
   -d "{\"email\":\"me@example.com\",\"accessToken\":\"...\",\"refreshToken\":\"...\",\"idToken\":\"...\"}"
 ```
@@ -122,7 +122,7 @@ Authorization: Bearer sk-clb-...
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CODEX_LB_HOST` | `127.0.0.1` | bind host |
-| `CODEX_LB_PORT` | `5555` | bind port |
+| `CODEX_LB_PORT` | `58557` | bind port |
 | `CODEX_LB_HOME` | `~/.codex-loadbalancer` | runtime home |
 | `CODEX_LB_STORE_PATH` | `$CODEX_LB_HOME/store.json` | 계정 및 API key store |
 | `CODEX_LB_ENCRYPTION_KEY_FILE` | `$CODEX_LB_HOME/encryption.key` | 로컬 토큰 암호화 키 |
@@ -132,6 +132,9 @@ Authorization: Bearer sk-clb-...
 | `CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS` | `8` | 일반 갱신 주기 |
 | `CODEX_LB_TOKEN_REFRESH_TIMEOUT_SECONDS` | `8` | 갱신 요청 timeout |
 | `CODEX_LB_PROXY_REQUEST_BUDGET_SECONDS` | `600` | 프록시 요청 예산 |
+| `CODEX_LB_PROXY_MAX_BODY_BYTES` | `10485760` | 프록시 요청 본문 최대 크기 |
+| `CODEX_LB_USAGE_POLL_CONCURRENCY` | `2` | 사용량 폴링 계정 동시성 |
+| `CODEX_LB_USAGE_POLL_JITTER_MS` | `5000` | 사용량 폴링 재시도 jitter |
 | `CODEX_LB_API_KEY_AUTH_ENABLED` | `false` | 로컬 프록시 bearer-token gate |
 | `CODEX_LB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent` |
 | `CODEX_LB_LOG_FILE` | `$CODEX_LB_HOME/proxy.log` | JSON 로그 파일 sink |

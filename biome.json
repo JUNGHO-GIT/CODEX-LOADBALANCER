@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -10,7 +10,7 @@
   },
   "formatter": {
     "enabled": true,
-    "indentStyle": "tab"
+    "indentStyle": "space"
   },
   "linter": {
     "enabled": true,
@@ -78,15 +78,21 @@
   },
   "javascript": {
     "formatter": {
+      "lineWidth": 320,
       "quoteStyle": "double"
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
     }
   },
   "overrides": [
     {
-      "includes": [
-        "**/*.html",
-        "**/*.htm"
-      ],
+      "includes": ["**/*.html", "**/*.htm"],
       "javascript": {
         "globals": [
           "APP_ENV",
@@ -331,10 +337,7 @@
             "noConsole": {
               "level": "warn",
               "options": {
-                "allow": [
-                  "warn",
-                  "error"
-                ]
+                "allow": ["warn", "error"]
               }
             },
             "noConstantBinaryExpressions": "error",
@@ -382,11 +385,7 @@
       }
     },
     {
-      "includes": [
-        "**/*.js",
-        "**/*.cjs",
-        "**/*.mjs"
-      ],
+      "includes": ["**/*.js", "**/*.cjs", "**/*.mjs"],
       "javascript": {
         "globals": [
           "APP_ENV",
@@ -631,10 +630,7 @@
             "noConsole": {
               "level": "warn",
               "options": {
-                "allow": [
-                  "warn",
-                  "error"
-                ]
+                "allow": ["warn", "error"]
               }
             },
             "noConstantBinaryExpressions": "error",
@@ -682,12 +678,7 @@
       }
     },
     {
-      "includes": [
-        "**/*.ts",
-        "**/*.cts",
-        "**/*.mts",
-        "**/*.d.ts"
-      ],
+      "includes": ["**/*.ts", "**/*.cts", "**/*.mts", "**/*.d.ts"],
       "javascript": {
         "globals": [
           "APP_ENV",
@@ -902,9 +893,7 @@
       }
     },
     {
-      "includes": [
-        "**/*.jsx"
-      ],
+      "includes": ["**/*.jsx"],
       "javascript": {
         "globals": [
           "APP_ENV",
@@ -1201,10 +1190,7 @@
             "noConsole": {
               "level": "warn",
               "options": {
-                "allow": [
-                  "warn",
-                  "error"
-                ]
+                "allow": ["warn", "error"]
               }
             },
             "noConstantBinaryExpressions": "error",
@@ -1253,9 +1239,7 @@
       }
     },
     {
-      "includes": [
-        "**/*.tsx"
-      ],
+      "includes": ["**/*.tsx"],
       "javascript": {
         "globals": [
           "APP_ENV",
@@ -1524,13 +1508,5 @@
         }
       }
     }
-  ],
-  "assist": {
-    "enabled": true,
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
-  }
+  ]
 }

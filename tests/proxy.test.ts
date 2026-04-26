@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -8,6 +8,7 @@ import type { Settings } from "../src/assets/scripts/config.ts";
 import { createLogger } from "../src/assets/scripts/logger.ts";
 import { createStore } from "../src/repositories/store.ts";
 import { createLoadBalancerServer } from "../src/routers/server.ts";
+import { FREE_PLAN_DEACTIVATION_REASON } from "../src/services/account-policy.ts";
 import { createAccount } from "../src/services/auth.ts";
 
 const servers: Server[] = [];
@@ -70,6 +71,394 @@ describe("proxy", () => {
 			assert.equal(response.status, 200);
 			assert.equal(authCalls, 0);
 			assert.equal(upstreamAuthorization, "Bearer access-token");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shares one token refresh across concurrent 401 retries for the same account", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			let authCalls = 0;
+			let oldTokenHits = 0;
+			let newTokenHits = 0;
+			const upstream = createServer((req, res) => {
+				const authorization = req.headers.authorization ?? "";
+				if (authorization === "Bearer old-token") {
+					oldTokenHits += 1;
+					res.writeHead(401, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "expired" }));
+					return;
+				}
+				if (authorization === "Bearer new-token") {
+					newTokenHits += 1;
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({
+						object: "list",
+						data: [
+							{ id: "gpt-4.1", object: "model" },
+						],
+					}));
+					return;
+				}
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_token" }));
+			});
+			const auth = createServer((_req, res) => {
+				authCalls += 1;
+				setTimeout(() => {
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(
+						JSON.stringify({
+							access_token: "new-token",
+							refresh_token: "new-refresh-token",
+							id_token: "new-id-token",
+						}),
+					);
+				}, 50);
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount(testAccount("account-a", "old-token", key));
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const requests = [0, 1].map(() =>
+				fetch(`http://127.0.0.1:${port}/backend-api/codex/models`, {
+					headers: { connection: "close" },
+				}),
+			);
+			const responses = await Promise.all(requests);
+
+			assert.deepEqual(
+				responses.map((response) => response.status),
+				[200, 200],
+			);
+			assert.equal(authCalls, 1);
+			assert.equal(oldTokenHits, 2);
+			assert.equal(newTokenHits, 2);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("skips accounts that reject a requested model and remembers that incompatibility", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			let unsupportedHits = 0;
+			let supportedHits = 0;
+			const upstream = createServer(async (req, res) => {
+				const authorization = req.headers.authorization ?? "";
+				const payload = JSON.parse((await readIncoming(req)).toString("utf8")) as {
+					model?: string;
+				};
+				if (authorization === "Bearer primary-token" && payload.model === "gpt-5.5") {
+					unsupportedHits += 1;
+					res.writeHead(400, { "content-type": "application/json" });
+					res.end(JSON.stringify({
+						detail: "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.",
+					}));
+					return;
+				}
+				if (authorization === "Bearer secondary-token") {
+					supportedHits += 1;
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({ account: "secondary" }));
+					return;
+				}
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_request" }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount(testAccount("account-a", "primary-token", key));
+			await store.upsertAccount(testAccount("account-b", "secondary-token", key));
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const request = () =>
+				fetch(`http://127.0.0.1:${port}/backend-api/codex/responses`, {
+					method: "POST",
+					headers: {
+						connection: "close",
+						"content-type": "application/json",
+					},
+					body: JSON.stringify({ model: "gpt-5.5", input: "hello" }),
+				});
+
+			const first = await request();
+			const second = await request();
+			const firstBody = await first.json();
+			const secondBody = await second.json();
+			const accounts = await store.listAccounts();
+			const primary = accounts.find((account) => account.id === "account-a");
+
+			assert.equal(first.status, 200);
+			assert.equal(second.status, 200);
+			assert.deepEqual(firstBody, { account: "secondary" });
+			assert.deepEqual(secondBody, { account: "secondary" });
+			assert.equal(unsupportedHits, 1);
+			assert.equal(supportedHits, 2);
+			assert.deepEqual(primary?.unsupportedModelIds, ["gpt-5.5"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back from gpt-5.5 to gpt-5.4 when only fallback-ready accounts remain", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			const seenModels: string[] = [];
+			const upstream = createServer(async (req, res) => {
+				const authorization = req.headers.authorization ?? "";
+				const payload = JSON.parse((await readIncoming(req)).toString("utf8")) as {
+					model?: string;
+				};
+				seenModels.push(payload.model ?? "missing");
+				if (authorization === "Bearer fallback-token" && payload.model === "gpt-5.4") {
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({ account: "fallback", model: payload.model }));
+					return;
+				}
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_request" }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount({
+				...testAccount("account-a", "fallback-token", key),
+				supportedModelIds: ["gpt-5.4"],
+			});
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const response = await fetch(`http://127.0.0.1:${port}/backend-api/codex/responses`, {
+				method: "POST",
+				headers: {
+					connection: "close",
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ model: "gpt-5.5", input: "hello" }),
+			});
+			const body = await response.json();
+
+			assert.equal(response.status, 200);
+			assert.deepEqual(body, { account: "fallback", model: "gpt-5.4" });
+			assert.deepEqual(seenModels, ["gpt-5.4"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("merges model catalogs across active accounts", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			const upstream = createServer((req, res) => {
+				const authorization = req.headers.authorization ?? "";
+				if (req.url === "/models" && authorization === "Bearer first-token") {
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({
+						object: "list",
+						data: [
+							{ id: "gpt-4.1", object: "model" },
+						],
+					}));
+					return;
+				}
+				if (req.url === "/models" && authorization === "Bearer second-token") {
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({
+						object: "list",
+						data: [
+							{ id: "gpt-5.5", object: "model" },
+							{ id: "gpt-4.1", object: "model" },
+						],
+					}));
+					return;
+				}
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_request" }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount(testAccount("account-a", "first-token", key));
+			await store.upsertAccount(testAccount("account-b", "second-token", key));
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const response = await fetch(`http://127.0.0.1:${port}/backend-api/codex/models`, {
+				headers: { connection: "close" },
+			});
+			const body = await response.json() as {
+				data?: Array<{ id?: string }>;
+			};
+			const modelIds = body.data?.map((item) => item.id).sort();
+			const accounts = await store.listAccounts();
+			const first = accounts.find((account) => account.id === "account-a");
+			const second = accounts.find((account) => account.id === "account-b");
+
+			assert.equal(response.status, 200);
+			assert.deepEqual(modelIds, ["gpt-4.1", "gpt-5.5"]);
+			assert.deepEqual(first?.supportedModelIds, ["gpt-4.1"]);
+			assert.deepEqual(second?.supportedModelIds, ["gpt-5.5", "gpt-4.1"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("auto-disables free-plan accounts created through the api and exposes runtime summary", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			const upstream = createServer((_req, res) => {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort, {
+					autoDisableFreePlan: true,
+				}),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const createResponse = await fetch(`http://127.0.0.1:${port}/api/accounts`, {
+				method: "POST",
+				headers: {
+					connection: "close",
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					email: "free@example.com",
+					accessToken: "access-token",
+					refreshToken: "refresh-token",
+					idToken: "id-token",
+					planType: "free",
+				}),
+			});
+			const accounts = await store.listAccounts();
+			const summaryResponse = await fetch(`http://127.0.0.1:${port}/api/runtime-summary`, {
+				headers: { connection: "close" },
+			});
+			const summary = await summaryResponse.json() as {
+				settings: {
+					preferredHighCapabilityModel: string;
+					fallbackHighCapabilityModel: string;
+				};
+				counts: {
+					autoDisabledFreeAccounts: number;
+				};
+			};
+
+			assert.equal(createResponse.status, 201);
+			assert.equal(accounts[0]?.status, "deactivated");
+			assert.equal(accounts[0]?.deactivationReason, FREE_PLAN_DEACTIVATION_REASON);
+			assert.equal(summaryResponse.status, 200);
+			assert.equal(summary.counts.autoDisabledFreeAccounts, 1);
+			assert.equal(summary.settings.preferredHighCapabilityModel, "gpt-5.5");
+			assert.equal(summary.settings.fallbackHighCapabilityModel, "gpt-5.4");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects oversized proxy request bodies before upstream selection", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			let upstreamHits = 0;
+			const upstream = createServer((_req, res) => {
+				upstreamHits += 1;
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort, {
+					proxyMaxBodyBytes: 8,
+				}),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const response = await fetch(`http://127.0.0.1:${port}/backend-api/codex/responses`, {
+				method: "POST",
+				headers: {
+					connection: "close",
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ input: "too large" }),
+			});
+			const body = await response.json() as {
+				error?: { code?: string };
+			};
+
+			assert.equal(response.status, 413);
+			assert.equal(body.error?.code, "request_body_too_large");
+			assert.equal(upstreamHits, 0);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -147,6 +536,64 @@ describe("proxy", () => {
 			assert.equal(fastCalled, true);
 			assert.ok(Date.now() - startedAt < 200);
 			await delay(350);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("clears global cooldown through the runtime api", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			const upstream = createServer((_req, res) => {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.setMeta({
+				globalCooldownUntil: Math.floor(Date.now() / 1000) + 300,
+				globalCooldownReason: "test_cooldown",
+			});
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort, {
+					globalCooldownEnabled: true,
+				}),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const before = await fetch(`http://127.0.0.1:${port}/api/runtime-summary`, {
+				headers: { connection: "close" },
+			});
+			const clear = await fetch(`http://127.0.0.1:${port}/api/global-cooldown/clear`, {
+				method: "POST",
+				headers: { connection: "close" },
+			});
+			const beforeBody = await before.json() as {
+				cooldown?: { active?: boolean };
+			};
+			const clearBody = await clear.json() as {
+				cooldown?: { active?: boolean };
+			};
+			const meta = await store.getMeta();
+
+			assert.equal(before.status, 200);
+			assert.equal(beforeBody.cooldown?.active, true);
+			assert.equal(clear.status, 200);
+			assert.equal(clearBody.cooldown?.active, false);
+			assert.deepEqual(meta, {
+				globalCooldownUntil: null,
+				globalCooldownReason: null,
+			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -321,6 +768,18 @@ function delay(milliseconds: number): Promise<void> {
 	});
 }
 
+// 2-2. Incoming read
+async function readIncoming(req: IncomingMessage): Promise<Buffer> {
+	const chunks: Buffer[] = [];
+	let total = 0;
+	for await (const chunk of req) {
+		const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+		chunks.push(buf);
+		total += buf.length;
+	}
+	return Buffer.concat(chunks, total);
+}
+
 // 3. Settings create ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function settings(
 	root: string,
@@ -341,6 +800,7 @@ function settings(
 		tokenRefreshIntervalDays: 1,
 		tokenRefreshTimeoutSeconds: 1,
 		proxyRequestBudgetSeconds: 600,
+		proxyMaxBodyBytes: 10_485_760,
 		apiKeyAuthEnabled: false,
 		codexAuthDir: null,
 		logLevel: "silent",
@@ -348,6 +808,9 @@ function settings(
 		parallelStaggerMs: 0,
 		globalCooldownEnabled: false,
 		usagePollIntervalSeconds: 900,
+		usagePollConcurrency: 2,
+		usagePollJitterMs: 5_000,
+		autoDisableFreePlan: false,
 		...overrides,
 	};
 }

@@ -45,7 +45,7 @@ bun start
 Default server:
 
 ```text
-http://127.0.0.1:5555
+http://127.0.0.1:58557
 ```
 
 ## Quick Start
@@ -66,8 +66,8 @@ Repeated imports update the same stable account IDs instead of creating duplicat
 Point Codex/OpenAI-compatible clients at either route family:
 
 ```text
-http://127.0.0.1:5555/backend-api/codex
-http://127.0.0.1:5555/v1
+http://127.0.0.1:58557/backend-api/codex
+http://127.0.0.1:58557/v1
 ```
 
 The proxy preserves the incoming request path after those prefixes and forwards the request
@@ -78,13 +78,13 @@ with the selected account access token.
 List imported accounts:
 
 ```bash
-curl http://127.0.0.1:5555/api/accounts
+curl http://127.0.0.1:58557/api/accounts
 ```
 
 Create or update an account manually:
 
 ```bash
-curl -X POST http://127.0.0.1:5555/api/accounts \
+curl -X POST http://127.0.0.1:58557/api/accounts \
   -H "content-type: application/json" \
   -d "{\"email\":\"me@example.com\",\"accessToken\":\"...\",\"refreshToken\":\"...\",\"idToken\":\"...\"}"
 ```
@@ -125,7 +125,7 @@ The server compares the SHA-256 hash of the bearer token with enabled entries in
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CODEX_LB_HOST` | `127.0.0.1` | Bind host |
-| `CODEX_LB_PORT` | `5555` | Bind port |
+| `CODEX_LB_PORT` | `58557` | Bind port |
 | `CODEX_LB_HOME` | `~/.codex-loadbalancer` | Runtime home |
 | `CODEX_LB_STORE_PATH` | `$CODEX_LB_HOME/store.json` | Account and API key store |
 | `CODEX_LB_ENCRYPTION_KEY_FILE` | `$CODEX_LB_HOME/encryption.key` | Local token encryption key |
@@ -135,6 +135,9 @@ The server compares the SHA-256 hash of the bearer token with enabled entries in
 | `CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS` | `8` | Normal refresh interval |
 | `CODEX_LB_TOKEN_REFRESH_TIMEOUT_SECONDS` | `8` | Refresh request timeout |
 | `CODEX_LB_PROXY_REQUEST_BUDGET_SECONDS` | `600` | Proxy request budget |
+| `CODEX_LB_PROXY_MAX_BODY_BYTES` | `10485760` | Maximum proxy request body size |
+| `CODEX_LB_USAGE_POLL_CONCURRENCY` | `2` | Usage polling account concurrency |
+| `CODEX_LB_USAGE_POLL_JITTER_MS` | `5000` | Usage polling retry jitter |
 | `CODEX_LB_API_KEY_AUTH_ENABLED` | `false` | Local proxy bearer-token gate |
 | `CODEX_LB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent` |
 | `CODEX_LB_LOG_FILE` | `$CODEX_LB_HOME/proxy.log` | File sink for JSON logs |

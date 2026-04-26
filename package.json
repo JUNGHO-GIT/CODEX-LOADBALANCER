@@ -1,54 +1,51 @@
 {
-	"name": "codex-loadbalancer",
-	"displayName": "CODEX LoadBalancer",
-	"description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
-	"publisher": "JUNGHO",
-	"license": "Apache-2.0",
-	"version": "1.0.0",
-	"main": "src/index.ts",
-	"bin": {
-		"codex-loadbalancer": "src/index.ts"
-	},
-	"files": [
-		"src",
-		"readme.md",
-		"readme.ko.md",
-		"architecture.md",
-		"architecture.ko.md",
-		"license.md"
-	],
-	"keywords": [
-		"codex",
-		"openai",
-		"chatgpt",
-		"load-balancer",
-		"proxy",
-		"bun"
-	],
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/JUNGHO-GIT/CODEX-LOADBALANCER.git"
-	},
-	"scripts": {
-		"git": "bun ~/.bootstrap/bootstrap-sync.mjs --git",
-		"sync": "bun ~/.bootstrap/bootstrap-sync.mjs --sync",
-		"tools": "bun ~/.bootstrap/bootstrap-sync.mjs --tools",
-		"start": "bun src/index.ts",
-		"dev": "bun --watch src/index.ts",
-		"check": "bunx tsc --noEmit -p tsconfig.json",
-		"test": "bun test",
-		"lint": "bunx biome check ."
-	},
-	"engines": {
-		"bun": ">=1.3.0"
-	},
-	"dependencies": {
-		"@clack/prompts": "^1.2.0",
-		"dotenv": "^17.4.2"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "2.4.13",
-		"@types/node": "25.6.0",
-		"typescript": "6.0.3"
-	}
+  "name": "codex-loadbalancer",
+  "displayName": "CODEX LoadBalancer",
+  "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
+  "publisher": "JUNGHO",
+  "license": "Apache-2.0",
+  "version": "1.0.2",
+  "main": "./src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jungho-dev/codex-loadbalancer.git"
+  },
+  "scripts": {
+    "git": "bun ~/.bootstrap/bootstrap-sync.mjs --git",
+    "sync": "bun ~/.bootstrap/bootstrap-sync.mjs --sync",
+    "tools": "bun ~/.bootstrap/bootstrap-sync.mjs --tools",
+    "start": "bun src/index.ts",
+    "dev": "bun --env-file=.env-codex-loadbalancer.test --watch src/index.ts",
+    "start:test": "bun --env-file=.env-codex-loadbalancer.test src/index.ts",
+    "dev:test": "bun --env-file=.env-codex-loadbalancer.test --watch src/index.ts",
+    "client:dev": "bun --cwd client --env-file=.env.test vite --mode test --host 127.0.0.1 --port 59176",
+    "client:dev:test": "bun --cwd client --env-file=.env.test vite --mode test --host 127.0.0.1 --port 59176",
+    "client:build": "bun --cwd client build",
+    "client:check": "bun --cwd client check",
+    "client:smoke": "bun scripts/smoke-client.mts",
+    "check": "bunx tsc --noEmit -p tsconfig.json",
+    "test": "bun test",
+    "lint": "bunx biome check ."
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.13",
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@swc/cli": "0.8.1",
+    "@swc/core": "1.15.30",
+    "@swc/helpers": "0.5.21",
+    "@types/node": "25.6.0",
+    "globals": "17.5.0",
+    "ts-morph": "28.0.0",
+    "ts-prune": "0.10.3",
+    "tsc-alias": "1.8.16",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3"
+  }
 }
