@@ -57,7 +57,29 @@ export function normalizePlanType(planType: string | null): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-// 5. Account plan policy apply ―――――――――――――――――――――――――――――――――――――――――――――――――
+// 5. Balancer exclusion check ――――――――――――――――――――――――――――――――――――――――――――――――――
+export function isBalancerExcludedAccount(account: Pick<Account, "planType">): boolean {
+  return isFreePlan(account.planType);
+}
+
+// 6. Auto-disabled free-plan check ――――――――――――――――――――――――――――――――――――――――――――
+export function isAutoDisabledFreePlanAccount(
+  account: Pick<Account, "status" | "deactivationReason">,
+): boolean {
+  return (
+    account.status === "deactivated" &&
+    account.deactivationReason === FREE_PLAN_DEACTIVATION_REASON
+  );
+}
+
+// 7. Free-plan reevaluate check ―――――――――――――――――――――――――――――――――――――――――――――――
+export function shouldReevaluateFreePlanAccount(
+  account: Pick<Account, "status" | "planType" | "deactivationReason">,
+): boolean {
+  return isFreePlan(account.planType) || isAutoDisabledFreePlanAccount(account);
+}
+
+// 8. Account plan policy apply ―――――――――――――――――――――――――――――――――――――――――――――――――
 export function applyAccountPlanPolicy(
   account: Account,
   autoDisableFreePlan: boolean,
@@ -94,7 +116,7 @@ export function applyAccountPlanPolicy(
   };
 }
 
-// 6. Account policy reconcile ―――――――――――――――――――――――――――――――――――――――――――――――――――
+// 9. Account policy reconcile ―――――――――――――――――――――――――――――――――――――――――――――――――――
 export async function reconcileAccountPolicies(
   store: Store,
   settings: Pick<Settings, "autoDisableFreePlan">,
@@ -115,7 +137,7 @@ export async function reconcileAccountPolicies(
   return updatedCount;
 }
 
-// 7. JWT claims read ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 10. JWT claims read ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function readJwtClaims(token: string | null): Record<string, unknown> | null {
   if (token === null) {
     return null;
@@ -133,7 +155,7 @@ function readJwtClaims(token: string | null): Record<string, unknown> | null {
   }
 }
 
-// 8. Base64url normalize ―――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 11. Base64url normalize ―――――――――――――――――――――――――――――――――――――――――――――――――――――
 function toBase64(value: string): string {
   const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
   const padding = normalized.length % 4;
@@ -143,14 +165,14 @@ function toBase64(value: string): string {
   return normalized.padEnd(normalized.length + (4 - padding), "=");
 }
 
-// 9. Object value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 12. Object value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function objectValue(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : null;
 }
 
-// 10. String value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 13. String value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }

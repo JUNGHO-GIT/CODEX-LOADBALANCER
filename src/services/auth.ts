@@ -21,16 +21,36 @@ export class RefreshError extends Error {
   }
 }
 
-// 2. Refresh needed ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-export function shouldRefresh(account: Account, intervalDays: number, now: Date = new Date()): boolean {
+// 2. Refresh timestamp read ――――――――――――――――――――――――――――――――――――――――――――――――――
+export function refreshTimestamp(account: Pick<Account, "lastRefresh">): number | null {
   const last = Date.parse(account.lastRefresh);
-  if (!Number.isFinite(last)) {
-    return true;
-  }
-  return now.getTime() - last > intervalDays * 24 * 60 * 60 * 1000;
+  return Number.isFinite(last) ? last : null;
 }
 
-// 3. Access refresh ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 3. Refresh interval ms ――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+export function refreshIntervalMs(intervalDays: number): number {
+  return Math.max(0, intervalDays) * 24 * 60 * 60 * 1000;
+}
+
+// 4. Next refresh due at ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
+export function nextRefreshDueAt(account: Pick<Account, "lastRefresh">, intervalDays: number): number | null {
+  const last = refreshTimestamp(account);
+  if (last === null) {
+    return null;
+  }
+  return last + refreshIntervalMs(intervalDays);
+}
+
+// 5. Refresh needed ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+export function shouldRefresh(account: Account, intervalDays: number, now: Date = new Date()): boolean {
+  const dueAt = nextRefreshDueAt(account, intervalDays);
+  if (dueAt === null) {
+    return true;
+  }
+  return now.getTime() > dueAt;
+}
+
+// 6. Access refresh ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export async function refreshAccessToken(refreshToken: string, settings: Settings, signal?: AbortSignal): Promise<TokenRefreshResult> {
   const response = await fetch(`${settings.authBaseUrl.replace(/\/$/, "")}/oauth/token`, {
     method: "POST",
@@ -66,7 +86,7 @@ export async function refreshAccessToken(refreshToken: string, settings: Setting
   };
 }
 
-// 4. Account ensure ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 7. Account ensure ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export async function ensureFreshAccount(account: Account, store: Store, settings: Settings, key: Buffer, force = false, logger?: Logger): Promise<Account> {
   const stored = await readStoredAccount(account, store);
   const current = stored ?? account;
@@ -110,7 +130,7 @@ export async function ensureFreshAccount(account: Account, store: Store, setting
   }
 }
 
-// 4-1. Account refresh
+// 7-1. Account refresh
 async function refreshAndStoreAccount(account: Account, store: Store, settings: Settings, key: Buffer, force: boolean, logger?: Logger): Promise<Account> {
   logger?.info("token_refresh.started", {
     accountId: account.id,
@@ -184,12 +204,12 @@ async function refreshAndStoreAccount(account: Account, store: Store, settings: 
   }
 }
 
-// 4-2. Stored account read
+// 7-2. Stored account read
 async function readStoredAccount(account: Account, store: Store): Promise<Account | null> {
   return await store.getAccount(account.id);
 }
 
-// 5. Account create ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 8. Account create ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export function createAccount(
   input: {
     id?: string;
@@ -229,8 +249,8 @@ export function createAccount(
   };
 }
 
-// 6. Error extract ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-// 6-1. Error code
+// 9. Error extract ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 9-1. Error code
 function extractErrorCode(payload: Record<string, unknown>): string | null {
   const error = payload.error;
   if (typeof error === "object" && error !== null && "code" in error) {
@@ -239,7 +259,7 @@ function extractErrorCode(payload: Record<string, unknown>): string | null {
   return stringValue(payload.error_code) ?? stringValue(payload.code);
 }
 
-// 6-2. Error message
+// 9-2. Error message
 function extractErrorMessage(payload: Record<string, unknown>): string | null {
   const error = payload.error;
   if (typeof error === "object" && error !== null) {
@@ -248,12 +268,12 @@ function extractErrorMessage(payload: Record<string, unknown>): string | null {
   return stringValue(payload.error_description) ?? stringValue(payload.message);
 }
 
-// 6-3. String value
+// 9-3. String value
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-// 6-4. Permanent refresh code
+// 9-4. Permanent refresh code
 function isPermanentRefreshCode(code: string): boolean {
   return ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated", "account_deactivated"].includes(code);
 }

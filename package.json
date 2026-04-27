@@ -4,7 +4,7 @@
   "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
   "publisher": "JUNGHO",
   "license": "Apache-2.0",
-  "version": "1.0.4",
+  "version": "1.0.8",
   "main": "./src/index.ts",
   "repository": {
     "type": "git",
@@ -20,8 +20,8 @@
     "dev:test": "bun --env-file=.env-codex-loadbalancer.test --watch src/index.ts",
     "client:dev": "bun --cwd client --env-file=.env.test vite --mode test --host 127.0.0.1 --port 59176",
     "client:dev:test": "bun --cwd client --env-file=.env.test vite --mode test --host 127.0.0.1 --port 59176",
-    "client:build": "bun --cwd client build",
-    "client:check": "bun --cwd client check",
+    "client:build": "bun --cwd client run build",
+    "client:check": "bun --cwd client run check",
     "client:smoke": "bun scripts/smoke-client.mts",
     "check": "bunx tsc --noEmit -p tsconfig.json",
     "test": "bun test",
@@ -36,7 +36,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.13",
-    "@stylistic/eslint-plugin": "5.10.0",
     "@swc/cli": "0.8.1",
     "@swc/core": "1.15.30",
     "@swc/helpers": "0.5.21",

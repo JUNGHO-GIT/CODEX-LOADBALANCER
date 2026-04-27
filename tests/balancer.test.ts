@@ -81,6 +81,23 @@ describe("balancer", () => {
     );
   });
 
+  it("excludes free-plan accounts from ranked balancer candidates", () => {
+    const free = {
+      ...account("a", 1),
+      planType: "free",
+    };
+    const paid = {
+      ...account("b", 90),
+      planType: "plus",
+    };
+    const ranked = rankAccounts([free, paid], 101);
+
+    assert.deepEqual(
+      ranked.map((item) => item.id),
+      ["b"],
+    );
+  });
+
   it("prefers gpt-5.5 ready accounts ahead of fallback-only accounts", () => {
     const preferredReady = {
       ...account("a", 20),

@@ -1,4 +1,5 @@
 import type { Account, AccountStatus } from "../assets/type/domain/common.ts";
+import { isBalancerExcludedAccount } from "./account-policy.ts";
 
 export const PREFERRED_HIGH_CAPABILITY_MODEL = "gpt-5.5";
 export const FALLBACK_HIGH_CAPABILITY_MODEL = "gpt-5.4";
@@ -35,7 +36,10 @@ export function selectAccount(accounts: Account[], now: number = Date.now() / 10
 
 // 1-1. Account rank
 export function rankAccounts(accounts: Account[], now: number = Date.now() / 1000, options: RankOptions = {}): Account[] {
-  const base = accounts.filter(isAvailable).toSorted((a, b) => compareAccount(a, b, now, options));
+  const base = accounts
+    .filter(isAvailable)
+    .filter((account) => !isBalancerExcludedAccount(account))
+    .toSorted((a, b) => compareAccount(a, b, now, options));
   if (options.excludeCooled !== true) {
     return base;
   }

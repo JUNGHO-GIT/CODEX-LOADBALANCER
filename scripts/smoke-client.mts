@@ -23,7 +23,7 @@ async function assertClientShell(): Promise<void> {
     throw new Error(`Client returned ${response.status}`);
   }
   const html = await response.text();
-  if (!html.includes("CODEX LoadBalancer") || !html.includes("/src/main.ts")) {
+  if (!html.includes("Codex LB") || !html.includes("/src/main.tsx") || !html.includes("id=\"root\"")) {
     throw new Error("Client shell did not include expected Vite app markers");
   }
 }
