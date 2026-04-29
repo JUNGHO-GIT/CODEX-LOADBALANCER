@@ -3,13 +3,7 @@ import { decryptToken } from "../assets/scripts/crypto.ts";
 import { errorContext, type Logger } from "../assets/scripts/logger.ts";
 import type { Account, UsagePayload } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
-import {
-  applyAccountPlanPolicy,
-  extractPlanType,
-  FREE_PLAN_DEACTIVATION_REASON,
-  isBalancerExcludedAccount,
-  shouldReevaluateFreePlanAccount,
-} from "./account-policy.ts";
+import { applyAccountPlanPolicy, extractPlanType, FREE_PLAN_DEACTIVATION_REASON, isBalancerExcludedAccount, shouldReevaluateFreePlanAccount } from "./account-policy.ts";
 import { ensureFreshAccount, shouldRefresh } from "./auth.ts";
 
 // 1. Usage fetch error ―――――――――――――――――――――――――――――――――――――――――――――――――――――
@@ -39,26 +33,14 @@ export async function fetchUsage(accessToken: string, accountId: string | null, 
   const response = await fetch(`${settings.upstreamBaseUrl.replace(/\/$/, "")}/wham/usage`, { headers });
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
-    throw new UsageFetchError(
-      response.status,
-      extractMessage(payload) ?? `Usage fetch failed (${response.status})`,
-      extractCode(payload),
-      extractPlanType(payload),
-    );
+    throw new UsageFetchError(response.status, extractMessage(payload) ?? `Usage fetch failed (${response.status})`, extractCode(payload), extractPlanType(payload));
   }
   return payload as UsagePayload;
 }
 
 // 3. Usage apply ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export async function refreshUsage(account: Account, store: Store, encryptionKey: Buffer, settings: Settings, logger?: Logger): Promise<Account> {
-  let current = await ensureFreshAccount(
-    account,
-    store,
-    settings,
-    encryptionKey,
-    false,
-    logger,
-  );
+  let current = await ensureFreshAccount(account, store, settings, encryptionKey, false, logger);
   let accessToken = decryptToken(current.accessTokenEncrypted, encryptionKey);
   let payload: UsagePayload;
   try {
@@ -67,37 +49,22 @@ export async function refreshUsage(account: Account, store: Store, encryptionKey
     if (!shouldRetryUsage(error)) {
       throw error;
     }
-    current = await ensureFreshAccount(
-      current,
-      store,
-      settings,
-      encryptionKey,
-      true,
-      logger,
-    );
+    current = await ensureFreshAccount(current, store, settings, encryptionKey, true, logger);
     accessToken = decryptToken(current.accessTokenEncrypted, encryptionKey);
     payload = await fetchUsage(accessToken, current.chatgptAccountId, settings);
   }
   const primary = payload.rate_limit?.primary_window;
   const secondary = payload.rate_limit?.secondary_window;
-  const updated = applyAccountPlanPolicy({
-    ...current,
-    planType: payload.plan_type ?? current.planType,
-    usedPercent:
-      typeof primary?.used_percent === "number"
-        ? primary.used_percent
-        : current.usedPercent,
-    secondaryUsedPercent:
-      typeof secondary?.used_percent === "number"
-        ? secondary.used_percent
-        : current.secondaryUsedPercent,
-    resetAt:
-      typeof primary?.reset_at === "number"
-        ? primary.reset_at
-        : typeof secondary?.reset_at === "number"
-          ? secondary.reset_at
-          : current.resetAt,
-  }, settings.autoDisableFreePlan);
+  const updated = applyAccountPlanPolicy(
+    {
+      ...current,
+      planType: payload.plan_type ?? current.planType,
+      usedPercent: typeof primary?.used_percent === "number" ? primary.used_percent : current.usedPercent,
+      secondaryUsedPercent: typeof secondary?.used_percent === "number" ? secondary.used_percent : current.secondaryUsedPercent,
+      resetAt: typeof primary?.reset_at === "number" ? primary.reset_at : typeof secondary?.reset_at === "number" ? secondary.reset_at : current.resetAt,
+    },
+    settings.autoDisableFreePlan,
+  );
   await store.upsertAccount(updated);
   return updated;
 }
@@ -184,12 +151,7 @@ export function startUsagePolling(store: Store, settings: Settings, encryptionKe
 }
 
 // 3-2. Usage polling plan build
-export function buildUsagePollingPlan(
-  accounts: Account[],
-  settings: Pick<Settings, "tokenRefreshIntervalDays">,
-  states: ReadonlyMap<string, UsagePollingState>,
-  now: number = Date.now(),
-): UsagePollingPlan {
+export function buildUsagePollingPlan(accounts: Account[], settings: Pick<Settings, "tokenRefreshIntervalDays">, states: ReadonlyMap<string, UsagePollingState>, now: number = Date.now()): UsagePollingPlan {
   const nowDate = new Date(now);
   const usageCandidates: Account[] = [];
   const intervalRefreshCandidates: Account[] = [];
@@ -217,33 +179,21 @@ export function isUsagePollingCandidate(account: Account): boolean {
 }
 
 // 3-4. Interval refresh candidate check
-export function isIntervalRefreshCandidate(
-  account: Account,
-  intervalDays: number,
-  now: Date = new Date(),
-): boolean {
+export function isIntervalRefreshCandidate(account: Account, intervalDays: number, now: Date = new Date()): boolean {
   if (!shouldReevaluateFreePlanAccount(account)) {
     return false;
   }
   if (account.status === "paused") {
     return false;
   }
-  if (
-    account.status === "deactivated" &&
-    account.deactivationReason !== FREE_PLAN_DEACTIVATION_REASON
-  ) {
+  if (account.status === "deactivated" && account.deactivationReason !== FREE_PLAN_DEACTIVATION_REASON) {
     return false;
   }
   return shouldRefresh(account, intervalDays, now);
 }
 
 // 3-5. Polling stage batches run
-async function runPollingStageBatches(
-  accounts: Account[],
-  size: number,
-  isStopped: () => boolean,
-  runner: (account: Account) => Promise<void>,
-): Promise<void> {
+async function runPollingStageBatches(accounts: Account[], size: number, isStopped: () => boolean, runner: (account: Account) => Promise<void>): Promise<void> {
   if (isStopped() || accounts.length === 0) {
     return;
   }
@@ -257,15 +207,7 @@ async function runPollingStageBatches(
 }
 
 // 3-6. Usage refresh with backoff
-async function refreshUsageWithBackoff(
-  account: Account,
-  store: Store,
-  encryptionKey: Buffer,
-  settings: Settings,
-  logger: Logger,
-  states: Map<string, UsagePollingState>,
-  jitterMs: number,
-): Promise<void> {
+async function refreshUsageWithBackoff(account: Account, store: Store, encryptionKey: Buffer, settings: Settings, logger: Logger, states: Map<string, UsagePollingState>, jitterMs: number): Promise<void> {
   try {
     await refreshUsage(account, store, encryptionKey, settings, logger);
     states.delete(account.id);
@@ -290,15 +232,7 @@ async function refreshUsageWithBackoff(
 }
 
 // 3-7. Interval refresh with backoff
-async function refreshAccountIntervalWithBackoff(
-  account: Account,
-  store: Store,
-  encryptionKey: Buffer,
-  settings: Settings,
-  logger: Logger,
-  states: Map<string, UsagePollingState>,
-  jitterMs: number,
-): Promise<void> {
+async function refreshAccountIntervalWithBackoff(account: Account, store: Store, encryptionKey: Buffer, settings: Settings, logger: Logger, states: Map<string, UsagePollingState>, jitterMs: number): Promise<void> {
   try {
     const refreshed = await ensureFreshAccount(account, store, settings, encryptionKey, false, logger);
     states.delete(account.id);
@@ -328,12 +262,17 @@ async function refreshAccountIntervalWithBackoff(
 
 // 3-8. Account chunk
 function chunkAccounts(accounts: Account[], size: number): Account[][] {
-  return accounts.reduce<Account[][]>((batches, account, index) => {
+  const batches: Account[][] = [];
+  for (const [index, account] of accounts.entries()) {
     const batchIndex = Math.floor(index / size);
-    const batch = batches[batchIndex] ?? [];
-    batches[batchIndex] = [...batch, account];
-    return batches;
-  }, []);
+    const batch = batches[batchIndex];
+    if (batch === undefined) {
+      batches[batchIndex] = [account];
+    } else {
+      batch.push(account);
+    }
+  }
+  return batches;
 }
 
 // 3-9. Usage backoff

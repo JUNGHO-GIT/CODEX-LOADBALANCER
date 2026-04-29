@@ -1,18 +1,56 @@
 {
-  "name": "codex-loadbalancer",
+  "name": "@jungho/codex-loadbalancer",
   "displayName": "CODEX LoadBalancer",
   "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
   "publisher": "JUNGHO",
   "license": "Apache-2.0",
-  "version": "1.1.5",
-  "main": "./src/index.ts",
+  "version": "1.1.6",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "codex-loadbalancer": "bin/codex-loadbalancer.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "architecture.ko.md",
+    "architecture.md",
+    "changelog.md",
+    "license.md",
+    "readme.ko.md",
+    "readme.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/jungho-dev/codex-loadbalancer#readme",
+  "bugs": {
+    "url": "https://github.com/jungho-dev/codex-loadbalancer/issues"
+  },
+  "keywords": [
+    "bun",
+    "codex",
+    "openai",
+    "proxy",
+    "load-balancer",
+    "chatgpt"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jungho-dev/codex-loadbalancer.git"
   },
   "scripts": {
+    "build": "bun build ./src/index.ts --outfile ./dist/index.js --target bun --format esm",
+    "check": "bunx tsc -p tsconfig.json --noEmit",
     "git": "bun ~/.bootstrap/bootstrap-sync.mts --git",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepublishOnly": "bun run build && bun run check && bun test && npm run pack:dry-run",
+    "start": "bun run ./src/index.ts",
     "sync": "bun ~/.bootstrap/bootstrap-sync.mts --sync",
+    "test": "bun test",
     "tools": "bun ~/.bootstrap/bootstrap-sync.mts --tools"
   },
   "engines": {

@@ -24,19 +24,26 @@ coordination, or audit screens.
 ## Install
 
 ```bash
-bun add codex-loadbalancer
+bun add @jungho/codex-loadbalancer
 ```
 
 For one-off execution:
 
 ```bash
-bunx codex-loadbalancer
+bunx @jungho/codex-loadbalancer
+```
+
+Global npm install:
+
+```bash
+npm install -g @jungho/codex-loadbalancer
 ```
 
 From a cloned repository:
 
 ```bash
 bun install
+bun run build
 bun run check
 bun test
 bun start
@@ -55,7 +62,7 @@ Copy Codex auth JSON files into a local directory and point the server at that d
 ```powershell
 Copy-Item -LiteralPath "$HOME\.codex\auth" -Destination ".\auth" -Recurse
 $env:CODEX_LB_AUTH_DIR = "$PWD\auth"
-bunx codex-loadbalancer
+codex-loadbalancer
 ```
 
 The server imports `.json` files from `CODEX_LB_AUTH_DIR` into the encrypted local store.

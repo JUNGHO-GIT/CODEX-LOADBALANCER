@@ -18,6 +18,16 @@ export type RankOptions = {
   fallbackModel?: string | null;
 };
 
+type RankedAccount = {
+  account: Account;
+  cooldownUntil: number;
+  isCooling: boolean;
+  modelPriority: number;
+  usage: number;
+  errorCount: number;
+  lastSelectedAt: number;
+};
+
 // 1. Account select ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export function selectAccount(accounts: Account[], now: number = Date.now() / 1000): SelectionResult {
   const ranked = rankAccounts(accounts, now, {
@@ -39,7 +49,9 @@ export function rankAccounts(accounts: Account[], now: number = Date.now() / 100
   const base = accounts
     .filter(isAvailable)
     .filter((account) => !isBalancerExcludedAccount(account))
-    .toSorted((a, b) => compareAccount(a, b, now, options));
+    .map((account) => createRankedAccount(account, now, options))
+    .toSorted(compareRankedAccount)
+    .map((entry) => entry.account);
   if (options.excludeCooled !== true) {
     return base;
   }
@@ -103,7 +115,8 @@ export function markRateLimited(account: Account, retryAfterSeconds: number, now
 // 3-2. Supported models record ―――――――――――――――――――――――――――――――――――――――――――――――――
 export function recordSupportedModels(account: Account, modelIds: string[]): Account {
   const supported = [...new Set(modelIds)];
-  const unsupported = account.unsupportedModelIds.filter((model) => !supported.includes(model));
+  const supportedSet = new Set(supported);
+  const unsupported = account.unsupportedModelIds.filter((model) => !supportedSet.has(model));
   return {
     ...account,
     supportedModelIds: supported,
@@ -113,9 +126,7 @@ export function recordSupportedModels(account: Account, modelIds: string[]): Acc
 
 // 3-3. Unsupported model record
 export function recordModelUnsupported(account: Account, model: string): Account {
-  const unsupported = account.unsupportedModelIds.includes(model)
-    ? account.unsupportedModelIds
-    : [...account.unsupportedModelIds, model];
+  const unsupported = account.unsupportedModelIds.includes(model) ? account.unsupportedModelIds : [...account.unsupportedModelIds, model];
   const supported = account.supportedModelIds?.filter((item) => item !== model) ?? null;
   return {
     ...account,
@@ -133,33 +144,41 @@ function isAvailable(account: Account): boolean {
   return account.status !== "deactivated" && account.status !== "paused";
 }
 
-// 5. Sort key ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-function compareAccount(left: Account, right: Account, now: number, options: RankOptions): number {
-  const leftCool = (left.cooldownUntil ?? 0) > now ? (left.cooldownUntil ?? 0) : 0;
-  const rightCool = (right.cooldownUntil ?? 0) > now ? (right.cooldownUntil ?? 0) : 0;
-  if (leftCool > 0 !== rightCool > 0) {
-    return leftCool > 0 ? 1 : -1;
+// 5. Ranked account create ―――――――――――――――――――――――――――――――――――――――――――――――――――――
+function createRankedAccount(account: Account, now: number, options: RankOptions): RankedAccount {
+  const cooldownUntil = (account.cooldownUntil ?? 0) > now ? (account.cooldownUntil ?? 0) : 0;
+  return {
+    account,
+    cooldownUntil,
+    isCooling: cooldownUntil > 0,
+    modelPriority: getModelPriority(account, options),
+    usage: account.secondaryUsedPercent ?? account.usedPercent ?? 0,
+    errorCount: account.errorCount,
+    lastSelectedAt: account.lastSelectedAt ?? 0,
+  };
+}
+
+// 5-1. Sort key compare ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
+function compareRankedAccount(left: RankedAccount, right: RankedAccount): number {
+  if (left.isCooling !== right.isCooling) {
+    return left.isCooling ? 1 : -1;
   }
-  if (leftCool !== rightCool) {
-    return leftCool - rightCool;
+  if (left.cooldownUntil !== right.cooldownUntil) {
+    return left.cooldownUntil - right.cooldownUntil;
   }
-  const leftModelPriority = getModelPriority(left, options);
-  const rightModelPriority = getModelPriority(right, options);
-  if (leftModelPriority !== rightModelPriority) {
-    return leftModelPriority - rightModelPriority;
+  if (left.modelPriority !== right.modelPriority) {
+    return left.modelPriority - right.modelPriority;
   }
-  const leftUsage = left.secondaryUsedPercent ?? left.usedPercent ?? 0;
-  const rightUsage = right.secondaryUsedPercent ?? right.usedPercent ?? 0;
-  if (leftUsage !== rightUsage) {
-    return leftUsage - rightUsage;
+  if (left.usage !== right.usage) {
+    return left.usage - right.usage;
   }
   if (left.errorCount !== right.errorCount) {
     return left.errorCount - right.errorCount;
   }
-  return (left.lastSelectedAt ?? 0) - (right.lastSelectedAt ?? 0);
+  return left.lastSelectedAt - right.lastSelectedAt;
 }
 
-// 5-1. Model support state ―――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 5-2. Model support state ―――――――――――――――――――――――――――――――――――――――――――――――――――――
 export function getModelSupportState(account: Account, model: string | null): ModelSupportState {
   if (model === null) {
     return "unknown";
@@ -173,12 +192,12 @@ export function getModelSupportState(account: Account, model: string | null): Mo
   return account.supportedModelIds.includes(model) ? "supported" : "unsupported";
 }
 
-// 5-2. Known unsupported model
+// 5-3. Known unsupported model
 export function isKnownUnsupportedModel(account: Account, model: string): boolean {
   return getModelSupportState(account, model) === "unsupported";
 }
 
-// 5-3. Model account filter
+// 5-4. Model account filter
 export function filterAccountsForModel(accounts: Account[], model: string | null): Account[] {
   if (model === null) {
     return accounts;
@@ -186,7 +205,7 @@ export function filterAccountsForModel(accounts: Account[], model: string | null
   return accounts.filter((account) => getModelSupportState(account, model) !== "unsupported");
 }
 
-// 5-4. Model priority
+// 5-5. Model priority
 function getModelPriority(account: Account, options: RankOptions): number {
   const preferredModel = options.preferredModel ?? PREFERRED_HIGH_CAPABILITY_MODEL;
   const fallbackModel = options.fallbackModel ?? FALLBACK_HIGH_CAPABILITY_MODEL;
@@ -197,7 +216,7 @@ function getModelPriority(account: Account, options: RankOptions): number {
   return getImplicitModelPriority(account, preferredModel, fallbackModel);
 }
 
-// 5-5. Requested model priority
+// 5-6. Requested model priority
 function getRequestedModelPriority(account: Account, requestedModel: string, preferredModel: string, fallbackModel: string): number {
   const requestedState = getModelSupportState(account, requestedModel);
   if (requestedState === "supported") {
@@ -218,7 +237,7 @@ function getRequestedModelPriority(account: Account, requestedModel: string, pre
   return 4;
 }
 
-// 5-6. Implicit model priority
+// 5-7. Implicit model priority
 function getImplicitModelPriority(account: Account, preferredModel: string, fallbackModel: string): number {
   const preferredState = getModelSupportState(account, preferredModel);
   const fallbackState = getModelSupportState(account, fallbackModel);

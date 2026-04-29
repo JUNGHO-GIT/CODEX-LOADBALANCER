@@ -137,28 +137,32 @@ so the proxy can still attempt them when no better candidate exists.
 
 ## Package Boundary
 
-The npm package publishes only source and documentation:
+The npm package publishes only the Bun entrypoint, bundled runtime, and documentation:
 
 ```text
-src/
+bin/
+dist/
 readme.md
 readme.ko.md
 architecture.md
 architecture.ko.md
+changelog.md
 license.md
 ```
 
-Local runtime artifacts, tests, caches, stores, and encryption keys stay outside the package.
+Local runtime artifacts, tests, client assets, caches, stores, and encryption keys stay outside the package.
 
 ## Validation Surface
 
 The current focused checks are:
 
 ```bash
+bun run build
 bun run check
 bun test
 npm pack --dry-run
 ```
 
-`bun run check` validates TypeScript. `bun test` covers account ranking, auth import, and proxy
-fallback behavior. `npm pack --dry-run` verifies the publish file list.
+`bun run build` validates the bundled Bun entrypoint. `bun run check` validates TypeScript.
+`bun test` covers account ranking, auth import, and proxy fallback behavior. `npm pack --dry-run`
+verifies the publish file list.

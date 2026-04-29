@@ -23,19 +23,26 @@ English documentation: [readme.md](readme.md)
 ## 설치
 
 ```bash
-bun add codex-loadbalancer
+bun add @jungho/codex-loadbalancer
 ```
 
 일회성 실행:
 
 ```bash
-bunx codex-loadbalancer
+bunx @jungho/codex-loadbalancer
+```
+
+전역 npm 설치:
+
+```bash
+npm install -g @jungho/codex-loadbalancer
 ```
 
 저장소에서 직접 실행:
 
 ```bash
 bun install
+bun run build
 bun run check
 bun test
 bun start
@@ -54,7 +61,7 @@ Codex auth JSON 파일을 로컬 디렉터리로 복사하고 서버가 그 디�
 ```powershell
 Copy-Item -LiteralPath "$HOME\.codex\auth" -Destination ".\auth" -Recurse
 $env:CODEX_LB_AUTH_DIR = "$PWD\auth"
-bunx codex-loadbalancer
+codex-loadbalancer
 ```
 
 서버는 `CODEX_LB_AUTH_DIR` 아래의 `.json` 파일을 암호화된 로컬 store로 가져옵니다.

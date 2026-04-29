@@ -25,6 +25,8 @@
 **/.gen/
 **/bin/
 **/.bin/
+!bin/
+!bin/codex-loadbalancer.js
 
 # 2. Dependencies / package artifacts
 **/node_modules/

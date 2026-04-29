@@ -137,28 +137,32 @@ primary attempt
 
 ## 패키지 경계
 
-npm package는 source와 문서만 배포합니다.
+npm package는 Bun 실행 엔트리, 번들 런타임, 문서만 배포합니다.
 
 ```text
-src/
+bin/
+dist/
 readme.md
 readme.ko.md
 architecture.md
 architecture.ko.md
+changelog.md
 license.md
 ```
 
-로컬 runtime artifact, test, cache, store, encryption key는 package 밖에 둡니다.
+로컬 runtime artifact, test, client asset, cache, store, encryption key는 package 밖에 둡니다.
 
 ## 검증 표면
 
 현재 집중 검증 명령:
 
 ```bash
+bun run build
 bun run check
 bun test
 npm pack --dry-run
 ```
 
-`bun run check`는 TypeScript를 검증합니다. `bun test`는 account ranking, auth import, proxy
-fallback 동작을 검증합니다. `npm pack --dry-run`은 publish file list를 확인합니다.
+`bun run build`는 Bun 번들 엔트리를 검증합니다. `bun run check`는 TypeScript를 검증합니다.
+`bun test`는 account ranking, auth import, proxy fallback 동작을 검증합니다.
+`npm pack --dry-run`은 publish file list를 확인합니다.
