@@ -1,6 +1,6 @@
 # codex-loadbalancer Architecture
 
-Korean version: [architecture.ko.md](architecture.ko.md)
+Korean version: [architecture.ko.md](architecture-ko.md)
 
 ## System Map
 
@@ -124,8 +124,9 @@ primary attempt
         +--> error: record transient error and try remaining accounts
 ```
 
-Only permanently inactive accounts are excluded. Cooled-down accounts are demoted, not removed,
-so the proxy can still attempt them when no better candidate exists.
+Free-plan and token-exhausted accounts are excluded from the balancer until their usage window
+resets. Cooled-down accounts are demoted, not removed, so the proxy can still attempt them when
+no better candidate exists.
 
 ## Security Boundaries
 

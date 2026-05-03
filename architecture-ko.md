@@ -124,7 +124,8 @@ primary attempt
         +--> error: record transient error and try remaining accounts
 ```
 
-영구 비활성 계정만 제외됩니다. cooldown 계정은 제거하지 않고 우선순위만 낮춥니다.
+무료 플랜 계정과 token usage 소진 계정은 사용량 창이 리셋될 때까지 balancer에서 제외됩니다.
+cooldown 계정은 제거하지 않고 우선순위만 낮춥니다.
 따라서 더 좋은 후보가 없을 때는 해당 계정도 다시 시도할 수 있습니다.
 
 ## 보안 경계

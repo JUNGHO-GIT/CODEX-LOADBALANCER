@@ -5,7 +5,7 @@ It stores copied ChatGPT account tokens in an encrypted local JSON store, select
 available account for each request, refreshes tokens when needed, and forwards traffic to
 the Codex backend API.
 
-Korean documentation: [readme.ko.md](readme.ko.md)
+Korean documentation: [readme.ko.md](readme-ko.md)
 
 ## Status
 
@@ -24,19 +24,19 @@ coordination, or audit screens.
 ## Install
 
 ```bash
-bun add @jungho/codex-loadbalancer
+bun add @jungho-dev/codex-loadbalancer
 ```
 
 For one-off execution:
 
 ```bash
-bunx @jungho/codex-loadbalancer
+bunx @jungho-dev/codex-loadbalancer
 ```
 
 Global npm install:
 
 ```bash
-npm install -g @jungho/codex-loadbalancer
+npm install -g @jungho-dev/codex-loadbalancer
 ```
 
 From a cloned repository:
@@ -174,4 +174,4 @@ tests/                    focused behavior tests
 ## More Documentation
 
 - [architecture.md](architecture.md)
-- [architecture.ko.md](architecture.ko.md)
+- [architecture.ko.md](architecture-ko.md)

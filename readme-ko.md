@@ -23,19 +23,19 @@ English documentation: [readme.md](readme.md)
 ## 설치
 
 ```bash
-bun add @jungho/codex-loadbalancer
+bun add @jungho-dev/codex-loadbalancer
 ```
 
 일회성 실행:
 
 ```bash
-bunx @jungho/codex-loadbalancer
+bunx @jungho-dev/codex-loadbalancer
 ```
 
 전역 npm 설치:
 
 ```bash
-npm install -g @jungho/codex-loadbalancer
+npm install -g @jungho-dev/codex-loadbalancer
 ```
 
 저장소에서 직접 실행:
@@ -171,4 +171,4 @@ tests/                    focused behavior tests
 ## 추가 문서
 
 - [architecture.md](architecture.md)
-- [architecture.ko.md](architecture.ko.md)
+- [architecture.ko.md](architecture-ko.md)
