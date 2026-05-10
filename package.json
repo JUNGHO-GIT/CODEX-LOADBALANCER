@@ -4,23 +4,22 @@
   "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
   "publisher": "JUNGHO",
   "license": "Apache-2.0",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "codex-loadbalancer": "bin/codex-loadbalancer.js"
+    "codex-loadbalancer": "./dist/index.js"
   },
   "exports": {
     ".": "./dist/index.js"
   },
   "files": [
-    "bin",
     "dist",
-    "architecture.ko.md",
+    "architecture-ko.md",
     "architecture.md",
     "changelog.md",
     "license.md",
-    "readme.ko.md",
+    "readme-ko.md",
     "readme.md"
   ],
   "publishConfig": {
@@ -43,9 +42,13 @@
     "url": "git+https://github.com/jungho-dev/codex-loadbalancer.git"
   },
   "scripts": {
+    "build": "bun build --target=bun --format=esm --sourcemap=linked --banner=\"#!/usr/bin/env bun\" --outdir=dist ./src/index.ts",
+    "check": "bunx tsc --noEmit",
     "git": "bun ~/.bootstrap/bootstrap-sync.ts --git",
+    "start": "bun src/index.ts",
     "swc": "bun ~/.bootstrap/bootstrap-sync.ts --swc",
     "sync": "bun ~/.bootstrap/bootstrap-sync.ts --sync",
+    "test": "bun test",
     "tools": "bun ~/.bootstrap/bootstrap-sync.ts --tools"
   },
   "engines": {

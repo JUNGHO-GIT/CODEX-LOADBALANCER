@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { Settings } from "../src/assets/scripts/config.ts";
 import { createStore } from "../src/repositories/store.ts";
-import { createAccount, ensureFreshAccount, RefreshError } from "../src/services/auth.ts";
+import { createAccount, ensureFreshAccount, RefreshError, refreshAccessToken } from "../src/services/auth.ts";
 
 const servers: Server[] = [];
 
@@ -87,6 +87,21 @@ describe("auth refresh", () => {
 
       assert.equal(stored?.status, "deactivated");
       assert.equal(stored?.deactivationReason, "Refresh token already used");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects successful non-json refresh responses as invalid upstream responses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-auth-refresh-"));
+    try {
+      const auth = createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end("<html></html>");
+      });
+      const authPort = await listen(auth);
+
+      await assert.rejects(refreshAccessToken("refresh-token", settings(root, authPort)), (error: unknown) => error instanceof RefreshError && error.code === "invalid_response");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

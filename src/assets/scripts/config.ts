@@ -47,7 +47,7 @@ export function loadSettings(): Settings {
       "CODEX_LB_UPSTREAM_BASE_URL",
       "https://chatgpt.com/backend-api/codex",
     ),
-    authBaseUrl: readEnv("CODEX_LB_AUTH_BASE_URL", "https://auth.openai.com"),
+    authBaseUrl: readEnv("CODEX_LB_AUTH_BASE_URL", "https://chatgpt.com"),
     oauthClientId: readEnv(
       "CODEX_LB_OAUTH_CLIENT_ID",
       "app_EMoamEEZ73f0CkXaXp7hrann",
@@ -80,7 +80,7 @@ export function loadSettings(): Settings {
       900,
     ),
     usagePollConcurrency: readIntEnv("CODEX_LB_USAGE_POLL_CONCURRENCY", 2),
-    usagePollJitterMs: readIntEnv("CODEX_LB_USAGE_POLL_JITTER_MS", 5_000),
+    usagePollJitterMs: readIntEnv("CODEX_LB_USAGE_POLL_JITTER_MS", 5000),
     autoDisableFreePlan: readBoolEnv(
       "CODEX_LB_AUTO_DISABLE_FREE_PLAN",
       true,

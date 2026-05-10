@@ -138,7 +138,7 @@ The server compares the SHA-256 hash of the bearer token with enabled entries in
 | `CODEX_LB_ENCRYPTION_KEY_FILE` | `$CODEX_LB_HOME/encryption.key` | Local token encryption key |
 | `CODEX_LB_AUTH_DIR` | unset | Directory of copied Codex auth JSON files |
 | `CODEX_LB_UPSTREAM_BASE_URL` | `https://chatgpt.com/backend-api/codex` | Codex upstream base URL |
-| `CODEX_LB_AUTH_BASE_URL` | `https://auth.openai.com` | OAuth token refresh base URL |
+| `CODEX_LB_AUTH_BASE_URL` | `https://chatgpt.com` | OAuth token refresh base URL |
 | `CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS` | `8` | Normal refresh interval |
 | `CODEX_LB_TOKEN_REFRESH_TIMEOUT_SECONDS` | `8` | Refresh request timeout |
 | `CODEX_LB_PROXY_REQUEST_BUDGET_SECONDS` | `600` | Proxy request budget |

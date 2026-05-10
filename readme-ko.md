@@ -135,7 +135,7 @@ Authorization: Bearer sk-clb-...
 | `CODEX_LB_ENCRYPTION_KEY_FILE` | `$CODEX_LB_HOME/encryption.key` | 로컬 토큰 암호화 키 |
 | `CODEX_LB_AUTH_DIR` | unset | 복사한 Codex auth JSON 디렉터리 |
 | `CODEX_LB_UPSTREAM_BASE_URL` | `https://chatgpt.com/backend-api/codex` | Codex upstream base URL |
-| `CODEX_LB_AUTH_BASE_URL` | `https://auth.openai.com` | OAuth token refresh base URL |
+| `CODEX_LB_AUTH_BASE_URL` | `https://chatgpt.com` | OAuth token refresh base URL |
 | `CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS` | `8` | 일반 갱신 주기 |
 | `CODEX_LB_TOKEN_REFRESH_TIMEOUT_SECONDS` | `8` | 갱신 요청 timeout |
 | `CODEX_LB_PROXY_REQUEST_BUDGET_SECONDS` | `600` | 프록시 요청 예산 |

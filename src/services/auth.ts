@@ -63,7 +63,7 @@ export async function refreshAccessToken(refreshToken: string, settings: Setting
     }),
     signal,
   });
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const payload = await readJsonObject(response);
   if (!response.ok) {
     const code = extractErrorCode(payload) ?? `http_${response.status}`;
     const message = extractErrorMessage(payload) ?? `Token refresh failed (${response.status})`;
@@ -273,7 +273,20 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-// 9-4. Permanent refresh code
+// 9-4. JSON object read
+async function readJsonObject(response: Response): Promise<Record<string, unknown>> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    if (response.ok) {
+      throw new RefreshError("invalid_response", "Refresh response was not JSON", false);
+    }
+    return {};
+  }
+  const payload = await response.json().catch(() => null);
+  return typeof payload === "object" && payload !== null && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+}
+
+// 9-5. Permanent refresh code
 function isPermanentRefreshCode(code: string): boolean {
   return ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated", "account_deactivated"].includes(code);
 }
