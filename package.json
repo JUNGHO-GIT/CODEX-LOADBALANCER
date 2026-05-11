@@ -1,10 +1,10 @@
 {
   "name": "@jungho-dev/codex-loadbalancer",
-  "displayName": "CODEX LoadBalancer",
+  "displayName": "Codes LoadBalancer",
   "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
   "publisher": "JUNGHO",
   "license": "Apache-2.0",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -42,13 +42,9 @@
     "url": "git+https://github.com/jungho-dev/codex-loadbalancer.git"
   },
   "scripts": {
-    "build": "bun build --target=bun --format=esm --sourcemap=linked --banner=\"#!/usr/bin/env bun\" --outdir=dist ./src/index.ts",
-    "check": "bunx tsc --noEmit",
     "git": "bun ~/.bootstrap/bootstrap-sync.ts --git",
-    "start": "bun src/index.ts",
     "swc": "bun ~/.bootstrap/bootstrap-sync.ts --swc",
     "sync": "bun ~/.bootstrap/bootstrap-sync.ts --sync",
-    "test": "bun test",
     "tools": "bun ~/.bootstrap/bootstrap-sync.ts --tools"
   },
   "engines": {
@@ -59,11 +55,11 @@
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.14",
+    "@biomejs/biome": "2.4.15",
     "@swc/cli": "0.8.1",
     "@swc/core": "1.15.33",
     "@swc/helpers": "0.5.21",
-    "@types/node": "25.6.0",
+    "@types/node": "25.6.2",
     "ts-morph": "28.0.0",
     "ts-prune": "0.10.3",
     "tsc-alias": "1.8.17",
