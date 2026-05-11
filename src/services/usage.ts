@@ -30,7 +30,7 @@ export async function fetchUsage(accessToken: string, accountId: string | null, 
   if (accountId !== null) {
     headers["chatgpt-account-id"] = accountId;
   }
-  const response = await fetch(`${settings.upstreamBaseUrl.replace(/\/$/, "")}/wham/usage`, { headers });
+  const response = await fetch(`${settings.upstreamBaseUrl.replace(/\/$/, "")}/usage`, { headers });
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new UsageFetchError(response.status, extractMessage(payload) ?? `Usage fetch failed (${response.status})`, extractCode(payload), extractPlanType(payload));
@@ -66,6 +66,16 @@ export async function refreshUsage(account: Account, store: Store, encryptionKey
     settings.autoDisableFreePlan,
   );
   await store.upsertAccount(updated);
+  logger?.info("usage.updated", {
+    accountId: updated.id,
+    accountName: updated.email ?? updated.id,
+    planType: updated.planType,
+    fiveHourUsedPercent: updated.usedPercent,
+    fiveHourRemainingPercent: remainingPercent(updated.usedPercent),
+    weeklyUsedPercent: updated.secondaryUsedPercent,
+    weeklyRemainingPercent: remainingPercent(updated.secondaryUsedPercent),
+    resetAt: updated.resetAt,
+  });
   return updated;
 }
 
@@ -283,6 +293,14 @@ function usageBackoffMs(failureCount: number): number {
 // 3-10. Random jitter
 function randomJitterMs(maxMs: number): number {
   return maxMs <= 0 ? 0 : Math.floor(Math.random() * maxMs);
+}
+
+// 3-11. Remaining percent
+function remainingPercent(usedPercent: number | null): number | null {
+  if (usedPercent === null || !Number.isFinite(usedPercent)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, 100 - usedPercent));
 }
 
 // 4. Error extract ――――――――――――――――――――――――――――――――――――――――――――――――――――――――

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +76,84 @@ describe("proxy", () => {
 		}
 	});
 
+	it("logs account name and remaining usage percentages on proxy success", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			const logLines: string[] = [];
+			const sink = {
+				debug: (line: string) => logLines.push(line),
+				info: (line: string) => logLines.push(line),
+				log: (line: string) => logLines.push(line),
+				warn: (line: string) => logLines.push(line),
+				error: (line: string) => logLines.push(line),
+			};
+			const upstream = createServer((_req, res) => {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			const auth = createServer((_req, res) => {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount({
+				...createAccount(
+					{
+						id: "account-a",
+						email: "alpha@example.com",
+						accessToken: "access-token",
+						refreshToken: "refresh-token",
+						idToken: "id-token",
+						planType: "plus",
+					},
+					key,
+				),
+				usedPercent: 40,
+				secondaryUsedPercent: 70,
+			});
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort),
+				encryptionKey: key,
+				store,
+				logger: createLogger("info", {}, sink),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const requestBody = Buffer.from((globalThis as typeof globalThis & {
+				Bun: { zstdCompressSync(input: Buffer): Uint8Array };
+			}).Bun.zstdCompressSync(Buffer.from(JSON.stringify({
+				model: "gpt-5.5",
+				reasoning: { effort: "high" },
+				input: "hello",
+			}), "utf8")));
+			const response = await fetch(
+				`http://127.0.0.1:${port}/backend-api/codex/responses`,
+				{
+					method: "POST",
+					headers: {
+						connection: "close",
+						"content-encoding": "zstd",
+						"content-type": "application/json",
+					},
+					body: requestBody,
+				},
+			);
+			const logText = logLines.join("\n").replace(/\u001b\[[0-9;]*m/g, "");
+
+			assert.equal(response.status, 200);
+			assert.match(logText, /AccountName : alpha@example\.com/);
+			assert.match(logText, /ModelName : gpt-5\.5 high/);
+			assert.match(logText, /FiveHourRemainingPercent : 60%/);
+			assert.match(logText, /WeeklyRemainingPercent : 30%/);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shares one token refresh across concurrent 401 retries for the same account", async () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
@@ -145,6 +223,89 @@ describe("proxy", () => {
 			assert.equal(authCalls, 1);
 			assert.equal(oldTokenHits, 2);
 			assert.equal(newTokenHits, 2);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reloads Codex auth files before OAuth refresh when an imported account gets 401", async () => {
+		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
+		try {
+			let authCalls = 0;
+			const seenAuthorizations: string[] = [];
+			const upstream = createServer((req, res) => {
+				const authorization = req.headers.authorization ?? "";
+				seenAuthorizations.push(authorization);
+				if (authorization === "Bearer old-token") {
+					res.writeHead(401, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "expired" }));
+					return;
+				}
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			const auth = createServer((_req, res) => {
+				authCalls += 1;
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "unexpected_refresh" }));
+			});
+			const upstreamPort = await listen(upstream);
+			const authPort = await listen(auth);
+			const authFile = join(root, "auth.json");
+			const key = Buffer.alloc(32, 1);
+			const store = createStore(join(root, "store.json"));
+			await store.upsertAccount({
+				...createAccount(
+					{
+						id: "codex-auth-auth",
+						email: "auth@example.com",
+						accessToken: "old-token",
+						refreshToken: "old-refresh",
+						idToken: "old-id",
+						chatgptAccountId: "account-id",
+						planType: "plus",
+					},
+					key,
+				),
+				lastRefresh: "2026-05-10T00:00:00.000Z",
+			});
+			await writeFile(
+				authFile,
+				JSON.stringify({
+					auth_mode: "chatgpt",
+					tokens: {
+						id_token: "new-id",
+						access_token: "new-token",
+						refresh_token: "new-refresh",
+						account_id: "account-id",
+					},
+					last_refresh: "2026-05-11T00:00:00.000Z",
+				}),
+				"utf8",
+			);
+			const server = createLoadBalancerServer({
+				settings: settings(root, upstreamPort, authPort, {
+					codexAuthDir: authFile,
+				}),
+				encryptionKey: key,
+				store,
+				logger: createLogger("silent"),
+				upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+			});
+			const port = await listen(server);
+
+			const response = await fetch(
+				`http://127.0.0.1:${port}/backend-api/codex/responses`,
+				{
+					method: "POST",
+					headers: { connection: "close" },
+					body: JSON.stringify({ input: "hello" }),
+				},
+			);
+
+			assert.equal(response.status, 200);
+			assert.equal(authCalls, 0);
+			assert.deepEqual(seenAuthorizations, ["Bearer old-token", "Bearer new-token"]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

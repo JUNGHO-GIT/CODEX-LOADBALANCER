@@ -19,6 +19,7 @@ import {
   recordSupportedModels,
   recordTransientError,
 } from "./balancer.ts";
+import { importCodexAuthDirectory } from "./codex-auth.ts";
 
 export type ProxyContext = {
   settings: Settings;
@@ -54,6 +55,7 @@ type RateLimitInfo = {
 type RequestIntent = {
   isModelsRequest: boolean;
   requestedModel: string | null;
+  reasoningEffort: string | null;
   fallbackModel: string | null;
 };
 
@@ -62,6 +64,7 @@ type ProxyPassResult =
       kind: "success";
       mode: "primary" | "parallel";
       outcome: AttemptSuccess;
+      prepared: PreparedRequest;
     }
   | {
       kind: "rate_limited";
@@ -77,6 +80,7 @@ type ProxyPassResult =
 type PreparedRequest = {
   body: Buffer;
   requestedModel: string | null;
+  reasoningEffort: string | null;
   usedFallback: boolean;
 };
 
@@ -156,7 +160,7 @@ export async function proxyRequest(req: IncomingMessage, res: ServerResponse, ct
     }
     throw error;
   }
-  const intent = requestIntent(path, body);
+  const intent = requestIntent(path, body, req.headers);
   const accounts = await ctx.store.listAccounts();
   const ranked = rankAccounts(accounts, Date.now() / 1000, {
     requestedModel: intent.requestedModel,
@@ -196,7 +200,7 @@ export async function proxyRequest(req: IncomingMessage, res: ServerResponse, ct
     writeJson(res, 503, openaiError("no_accounts", "No active accounts available", "server_error"));
     return;
   }
-  const initialResult = await executeProxyPass(candidates, req, createPreparedRequest(body, intent.requestedModel, false), ctx);
+  const initialResult = await executeProxyPass(candidates, req, createPreparedRequest(body, req.headers, intent.requestedModel, false), ctx);
   if (await writeProxyPassResult(initialResult, res, ctx)) {
     return;
   }
@@ -297,8 +301,7 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
   const resetEpochs: number[] = [];
   const remaining = candidates.slice(1);
   ctx.logger.info("proxy.account_selected", {
-    accountId: best.id,
-    usedPercent: best.usedPercent,
+    ...accountUsageLogContext(best, prepared),
     candidateCount: candidates.length,
     mode: "primary",
     requestedModel: prepared.requestedModel,
@@ -314,7 +317,7 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
         resetEpochs.push(info.resetAtEpoch);
       }
       ctx.logger.warn("proxy.upstream_rate_limited", {
-        accountId: outcome.account.id,
+        ...accountUsageLogContext(outcome.account, prepared),
         retryAfterSeconds: info.retryAfterSeconds,
         retried: outcome.retried ? true : undefined,
         remainingCandidates: remaining.length,
@@ -328,6 +331,7 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
         kind: "success",
         mode: "primary",
         outcome,
+        prepared,
       };
     }
   } catch (error) {
@@ -341,6 +345,7 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
         kind: "success",
         mode: "parallel",
         outcome: race.winner,
+        prepared,
       };
     }
     if (race.lastRateLimit !== null) {
@@ -372,7 +377,7 @@ async function writeProxyPassResult(result: ProxyPassResult, res: ServerResponse
   if (result.kind === "success") {
     await ctx.store.upsertAccount(recordSuccess(result.outcome.account));
     ctx.logger.info("proxy.request_succeeded", {
-      accountId: result.outcome.account.id,
+      ...accountUsageLogContext(result.outcome.account, result.prepared),
       statusCode: result.outcome.response.status,
       retried: result.outcome.retried ? true : undefined,
       mode: result.mode,
@@ -404,7 +409,7 @@ async function tryPreferredModelFallback(
   if (intent.requestedModel !== PREFERRED_HIGH_CAPABILITY_MODEL || intent.fallbackModel === null) {
     return false;
   }
-  const rewrittenBody = rewriteRequestModel(body, intent.fallbackModel);
+  const rewrittenBody = rewriteRequestModel(body, req.headers, intent.fallbackModel);
   if (rewrittenBody === null) {
     return false;
   }
@@ -426,7 +431,7 @@ async function tryPreferredModelFallback(
   const fallbackResult = await executeProxyPass(
     candidates,
     req,
-    createPreparedRequest(rewrittenBody, intent.fallbackModel, true),
+    createPreparedRequest(rewrittenBody, req.headers, intent.fallbackModel, true),
     ctx,
   );
   if (await writeProxyPassResult(fallbackResult, res, ctx)) {
@@ -445,10 +450,16 @@ async function tryPreferredModelFallback(
 }
 
 // 1-0-5. Prepared request create
-function createPreparedRequest(body: Buffer, requestedModel: string | null, usedFallback: boolean): PreparedRequest {
+function createPreparedRequest(
+  body: Buffer,
+  headers: IncomingHttpHeaders,
+  requestedModel: string | null,
+  usedFallback: boolean,
+): PreparedRequest {
   return {
     body,
     requestedModel,
+    reasoningEffort: extractReasoningEffort(parseRequestJson(body, headers)),
     usedFallback,
   };
 }
@@ -473,7 +484,22 @@ async function attemptAccount(account: Account, req: IncomingMessage, body: Buff
     return { account, response, retried: false };
   }
   signal?.throwIfAborted();
-  ctx.logger.warn("proxy.token_refresh_retry", { accountId: account.id });
+  ctx.logger.warn("proxy.token_refresh_retry", accountUsageLogContext(account));
+  const reloaded = await reloadCodexAuthAccount(account, ctx);
+  if (reloaded !== null) {
+    tokenCache.delete(reloaded.id);
+    signal?.throwIfAborted();
+    response = await sendUpstream(req, body, reloaded, ctx, true, signal);
+    const modelError = requestedModel === null ? null : await parseModelUnsupported(response, requestedModel);
+    if (modelError !== null) {
+      await discardBody(response);
+      throw modelError;
+    }
+    return { account: reloaded, response, retried: true };
+  }
+  if (isCodexAuthAccount(account) && ctx.settings.codexAuthDir !== null) {
+    throw new RefreshError("codex_auth_stale", "Codex auth file did not provide a fresh token", false);
+  }
   const refreshed = await ensureFreshAccount(account, ctx.store, ctx.settings, ctx.encryptionKey, true, ctx.logger);
   tokenCache.delete(refreshed.id);
   signal?.throwIfAborted();
@@ -484,6 +510,42 @@ async function attemptAccount(account: Account, req: IncomingMessage, body: Buff
     throw modelError;
   }
   return { account: refreshed, response, retried: true };
+}
+
+// 1-1-1. Codex auth account reload
+async function reloadCodexAuthAccount(account: Account, ctx: ProxyContext): Promise<Account | null> {
+  if (!isCodexAuthAccount(account) || ctx.settings.codexAuthDir === null) {
+    return null;
+  }
+  const imported = await importCodexAuthDirectory(
+    ctx.settings.codexAuthDir,
+    ctx.store,
+    ctx.encryptionKey,
+    ctx.settings.autoDisableFreePlan,
+    ctx.logger,
+  );
+  if (imported === 0) {
+    return null;
+  }
+  const stored = await ctx.store.getAccount(account.id);
+  if (
+    stored === null ||
+    stored.status !== "active" ||
+    (
+      stored.accessTokenEncrypted === account.accessTokenEncrypted &&
+      stored.refreshTokenEncrypted === account.refreshTokenEncrypted &&
+      stored.idTokenEncrypted === account.idTokenEncrypted
+    )
+  ) {
+    return null;
+  }
+  ctx.logger.info("codex_auth.account_reloaded", accountUsageLogContext(stored));
+  return stored;
+}
+
+// 1-1-2. Codex auth account check
+function isCodexAuthAccount(account: Account): boolean {
+  return account.id.startsWith("codex-auth-");
 }
 
 // 1-2. Parallel race across accounts ――――――――――――――――――――――――――――――――――――――
@@ -513,8 +575,7 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
       }
       const signal = controller.signal;
       ctx.logger.info("proxy.account_selected", {
-        accountId: account.id,
-        usedPercent: account.usedPercent,
+        ...accountUsageLogContext(account),
         candidateCount: accounts.length,
         mode: "parallel",
       });
@@ -522,7 +583,7 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
         .then(async (outcome) => {
           if (done) {
             ctx.logger.debug("proxy.parallel_late_response_discarded", {
-              accountId: outcome.account.id,
+              ...accountUsageLogContext(outcome.account),
               statusCode: outcome.response.status,
             });
             await discardBody(outcome.response);
@@ -536,7 +597,7 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
             }
             await ctx.store.upsertAccount(markRateLimited(outcome.account, info.retryAfterSeconds));
             ctx.logger.warn("proxy.upstream_rate_limited", {
-              accountId: outcome.account.id,
+              ...accountUsageLogContext(outcome.account),
               retryAfterSeconds: info.retryAfterSeconds,
               retried: outcome.retried ? true : undefined,
               mode: "parallel",
@@ -547,7 +608,7 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
           done = true;
           const abortedCount = abortOtherAttempts(controllers, index);
           ctx.logger.debug("proxy.parallel_cancelled", {
-            winnerAccountId: outcome.account.id,
+            ...accountUsageLogContext(outcome.account),
             abortedCount,
           });
           resolve({ kind: "winner", winner: outcome });
@@ -555,7 +616,7 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
         .catch(async (error) => {
           if (signal.aborted) {
             ctx.logger.debug("proxy.parallel_attempt_aborted", {
-              accountId: account.id,
+              ...accountUsageLogContext(account),
             });
             return;
           }
@@ -609,7 +670,7 @@ function abortOtherAttempts(controllers: AbortController[], winnerIndex: number)
 async function handleAttemptError(account: Account, error: unknown, ctx: ProxyContext, remainingCandidates: number, mode: "primary" | "parallel" | "models"): Promise<void> {
   if (error instanceof RefreshError && error.permanent) {
     ctx.logger.warn("proxy.permanent_refresh_failure", {
-      accountId: account.id,
+      ...accountUsageLogContext(account),
       code: error.code,
       message: error.message,
       remainingCandidates,
@@ -620,7 +681,7 @@ async function handleAttemptError(account: Account, error: unknown, ctx: ProxyCo
   if (error instanceof AccountModelUnsupportedError) {
     await ctx.store.upsertAccount(recordModelUnsupported(account, error.model));
     ctx.logger.warn("proxy.model_unsupported", {
-      accountId: account.id,
+      ...accountUsageLogContext(account),
       model: error.model,
       code: error.code,
       message: error.message,
@@ -631,7 +692,7 @@ async function handleAttemptError(account: Account, error: unknown, ctx: ProxyCo
   }
   await ctx.store.upsertAccount(recordTransientError(account));
   ctx.logger.error("proxy.account_attempt_failed", {
-    accountId: account.id,
+    ...accountUsageLogContext(account),
     remainingCandidates,
     mode,
     ...errorContext(error),
@@ -743,8 +804,7 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
   const models = new Map<string, Record<string, unknown>>();
   for (const account of accounts) {
     ctx.logger.info("proxy.account_selected", {
-      accountId: account.id,
-      usedPercent: account.usedPercent,
+      ...accountUsageLogContext(account),
       candidateCount: accounts.length,
       mode: "models",
     });
@@ -755,7 +815,7 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
         await ctx.store.upsertAccount(markRateLimited(outcome.account, info.retryAfterSeconds));
         lastRateLimit = info;
         ctx.logger.warn("proxy.upstream_rate_limited", {
-          accountId: outcome.account.id,
+          ...accountUsageLogContext(outcome.account),
           retryAfterSeconds: info.retryAfterSeconds,
           retried: outcome.retried ? true : undefined,
           remainingCandidates: accounts.length - models.size - 1,
@@ -887,49 +947,95 @@ function requestPath(path: string): string {
 }
 
 // 5-2. Request intent ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
-function requestIntent(path: string, body: Buffer): RequestIntent {
-  const requestedModel = extractRequestedModel(body);
+function requestIntent(path: string, body: Buffer, headers: IncomingHttpHeaders): RequestIntent {
+  const parsed = parseRequestJson(body, headers);
+  const requestedModel = extractRequestedModel(parsed);
   return {
     isModelsRequest: path === "/backend-api/codex/models" || path === "/v1/models",
     requestedModel,
+    reasoningEffort: extractReasoningEffort(parsed),
     fallbackModel: requestedModel === PREFERRED_HIGH_CAPABILITY_MODEL ? FALLBACK_HIGH_CAPABILITY_MODEL : null,
   };
 }
 
-// 5-3. Requested model extract ―――――――――――――――――――――――――――――――――――――――――――――――
-function extractRequestedModel(body: Buffer): string | null {
+// 5-3. Request JSON parse ―――――――――――――――――――――――――――――――――――――――――――――――
+function parseRequestJson(body: Buffer, headers: IncomingHttpHeaders): Record<string, unknown> | null {
   if (body.length === 0) {
     return null;
   }
   try {
-    const parsed = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
-    return stringValue(parsed.model);
-  } catch {
+    return objectValue(JSON.parse(decodeRequestBody(body, headers).toString("utf8")));
+  }
+  catch {
     return null;
   }
 }
 
-// 5-4. Request model rewrite ――――――――――――――――――――――――――――――――――――――――――――――――――
-function rewriteRequestModel(body: Buffer, nextModel: string): Buffer | null {
-  if (body.length === 0) {
-    return null;
+// 5-4. Request body decode
+function decodeRequestBody(body: Buffer, headers: IncomingHttpHeaders): Buffer {
+  if (requestContentEncoding(headers) === "zstd") {
+    return Buffer.from(bunCompression().zstdDecompressSync(body));
   }
-  try {
-    const parsed = objectValue(JSON.parse(body.toString("utf8")));
-    if (parsed === null) {
-      return null;
-    }
-    const next = {
-      ...parsed,
-      model: nextModel,
+  return body;
+}
+
+// 5-5. Request body encode
+function encodeRequestBody(body: Buffer, headers: IncomingHttpHeaders): Buffer {
+  if (requestContentEncoding(headers) === "zstd") {
+    return Buffer.from(bunCompression().zstdCompressSync(body));
+  }
+  return body;
+}
+
+// 5-6. Bun compression
+function bunCompression(): {
+  zstdCompressSync(input: Buffer): Uint8Array;
+  zstdDecompressSync(input: Buffer): Uint8Array;
+} {
+  const bun = (globalThis as typeof globalThis & {
+    Bun?: {
+      zstdCompressSync(input: Buffer): Uint8Array;
+      zstdDecompressSync(input: Buffer): Uint8Array;
     };
-    return Buffer.from(JSON.stringify(next), "utf8");
-  } catch {
-    return null;
+  }).Bun;
+  if (bun === undefined) {
+    throw new Error("Bun zstd compression is unavailable");
   }
+  return bun;
 }
 
-// 5-5. Models payload read ―――――――――――――――――――――――――――――――――――――――――――――――――――
+// 5-7. Request content encoding
+function requestContentEncoding(headers: IncomingHttpHeaders): string | null {
+  const raw = headers["content-encoding"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === undefined ? null : value.trim().toLowerCase();
+}
+
+// 5-8. Requested model extract ―――――――――――――――――――――――――――――――――――――――――――――――
+function extractRequestedModel(parsed: Record<string, unknown> | null): string | null {
+  return stringValue(parsed?.model);
+}
+
+// 5-9. Reasoning effort extract
+function extractReasoningEffort(parsed: Record<string, unknown> | null): string | null {
+  const reasoning = objectValue(parsed?.reasoning);
+  return stringValue(reasoning?.effort) ?? stringValue(parsed?.reasoning_effort);
+}
+
+// 5-10. Request model rewrite ――――――――――――――――――――――――――――――――――――――――――――――――――
+function rewriteRequestModel(body: Buffer, headers: IncomingHttpHeaders, nextModel: string): Buffer | null {
+  const parsed = parseRequestJson(body, headers);
+  if (parsed === null) {
+    return null;
+  }
+  const next = {
+    ...parsed,
+    model: nextModel,
+  };
+  return encodeRequestBody(Buffer.from(JSON.stringify(next), "utf8"), headers);
+}
+
+// 5-6. Models payload read ―――――――――――――――――――――――――――――――――――――――――――――――――――
 async function readModelsPayload(response: Response): Promise<Record<string, unknown> | null> {
   try {
     const parsed = (await response.json()) as unknown;
@@ -939,7 +1045,7 @@ async function readModelsPayload(response: Response): Promise<Record<string, unk
   }
 }
 
-// 5-6. Models collect ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 5-7. Models collect ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function collectModels(payload: Record<string, unknown>, target: Map<string, Record<string, unknown>>): string[] {
   const data = Array.isArray(payload.data) ? payload.data : [];
   const modelIds: string[] = [];
@@ -957,7 +1063,7 @@ function collectModels(payload: Record<string, unknown>, target: Map<string, Rec
   return modelIds;
 }
 
-// 5-7. Unsupported model parse ―――――――――――――――――――――――――――――――――――――――――――――
+// 5-8. Unsupported model parse ―――――――――――――――――――――――――――――――――――――――――――――
 async function parseModelUnsupported(response: Response, requestedModel: string): Promise<AccountModelUnsupportedError | null> {
   if (response.status !== 400 && response.status !== 403) {
     return null;
@@ -984,12 +1090,12 @@ async function parseModelUnsupported(response: Response, requestedModel: string)
   return new AccountModelUnsupportedError(requestedModel, message, code);
 }
 
-// 5-8. Object value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 5-9. Object value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function objectValue(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
 }
 
-// 5-9. String value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
+// 5-10. String value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -1083,7 +1189,47 @@ export function writeJson(res: ServerResponse, status: number, payload: unknown)
   res.end(body);
 }
 
-// 8-3. Error message
+// 8-3. Account usage log context
+function accountUsageLogContext(account: Account, request?: Pick<PreparedRequest, "requestedModel" | "reasoningEffort">): Record<string, unknown> {
+  const usageStatus = request === undefined ? {} : accountUsageStatus(account, request);
+  return {
+    accountId: account.id,
+    accountName: account.email ?? account.id,
+    ...usageStatus,
+    cooldownUntil: account.cooldownUntil,
+  };
+}
+
+// 8-4. Account usage status
+function accountUsageStatus(account: Account, request: Pick<PreparedRequest, "requestedModel" | "reasoningEffort">): Record<string, string> {
+  const model = request.requestedModel ?? "unknown-model";
+  const effort = request.reasoningEffort === null ? "" : ` ${request.reasoningEffort}`;
+  return {
+    modelName: `${model}${effort}`,
+    fiveHourRemainingPercent: formatRemainingPercent(account.usedPercent),
+    weeklyRemainingPercent: formatRemainingPercent(account.secondaryUsedPercent),
+  };
+}
+
+// 8-5. Remaining percent format
+function formatRemainingPercent(usedPercent: number | null): string {
+  const remaining = usageRemainingPercent(usedPercent);
+  if (remaining === null) {
+    return "unknown";
+  }
+  const rounded = Math.round(remaining * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`;
+}
+
+// 8-6. Usage remaining percent
+function usageRemainingPercent(usedPercent: number | null): number | null {
+  if (usedPercent === null || !Number.isFinite(usedPercent)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
+// 8-7. Error message
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Request to upstream failed";
 }

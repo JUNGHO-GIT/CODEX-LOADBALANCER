@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
 import { describe, it } from "node:test";
+import type { Settings } from "../src/assets/scripts/config.ts";
 import type { Account } from "../src/assets/type/domain/common.ts";
 import { FREE_PLAN_DEACTIVATION_REASON } from "../src/services/account-policy.ts";
-import { buildUsagePollingPlan } from "../src/services/usage.ts";
+import { buildUsagePollingPlan, fetchUsage } from "../src/services/usage.ts";
 
 // 1. Account factory ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function account(
@@ -34,6 +36,40 @@ function account(
 }
 
 describe("usage polling planner", () => {
+  it("fetches usage from the Codex usage endpoint", async () => {
+    let requestedUrl = "";
+    const server = createServer((req, res) => {
+      requestedUrl = req.url ?? "";
+      assert.equal(req.headers.authorization, "Bearer access-token");
+      assert.equal(req.headers["chatgpt-account-id"], "account-id");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        plan_type: "plus",
+        rate_limit: {
+          primary_window: {
+            used_percent: 10,
+            reset_at: 1_800_000_000,
+          },
+        },
+      }));
+    });
+    const port = await listen(server);
+    try {
+      const usage = await fetchUsage(
+        "access-token",
+        "account-id",
+        settings("http://127.0.0.1:" + port + "/backend-api/codex"),
+      );
+
+      assert.equal(requestedUrl, "/backend-api/codex/usage");
+      assert.equal(usage.plan_type, "plus");
+      assert.equal(usage.rate_limit?.primary_window?.used_percent, 10);
+    }
+    finally {
+      await closeServer(server);
+    }
+  });
+
   it("splits paid usage candidates from free-plan interval refresh candidates", () => {
     const paid = account("paid-plus", {
       planType: "plus",
@@ -90,3 +126,57 @@ describe("usage polling planner", () => {
     assert.deepEqual(plan.intervalRefreshCandidates, []);
   });
 });
+
+function listen(server: Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (typeof address === "object" && address !== null) {
+        resolve(address.port);
+        return;
+      }
+      reject(new Error("Server did not bind to a TCP port"));
+    });
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error === undefined) {
+        resolve();
+        return;
+      }
+      reject(error);
+    });
+  });
+}
+
+function settings(upstreamBaseUrl: string): Settings {
+  return {
+    host: "127.0.0.1",
+    port: 0,
+    homeDir: "",
+    storePath: "",
+    encryptionKeyFile: "",
+    upstreamBaseUrl,
+    authBaseUrl: "http://127.0.0.1",
+    oauthClientId: "client",
+    oauthScope: "openid",
+    tokenRefreshIntervalDays: 1,
+    tokenRefreshTimeoutSeconds: 1,
+    proxyRequestBudgetSeconds: 600,
+    proxyMaxBodyBytes: 10_485_760,
+    apiKeyAuthEnabled: false,
+    codexAuthDir: null,
+    logLevel: "silent",
+    parallelConcurrency: 2,
+    parallelStaggerMs: 0,
+    globalCooldownEnabled: false,
+    usagePollIntervalSeconds: 900,
+    usagePollConcurrency: 2,
+    usagePollJitterMs: 0,
+    autoDisableFreePlan: false,
+  };
+}

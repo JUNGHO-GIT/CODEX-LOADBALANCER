@@ -47,6 +47,75 @@ describe("codex auth import", () => {
     }
   });
 
+  it("imports a single Codex auth.json file path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-auth-import-"));
+    try {
+      const authFile = join(root, "auth.json");
+      await writeFile(
+        authFile,
+        JSON.stringify({
+          auth_mode: "chatgpt",
+          tokens: {
+            id_token: "id-token",
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            account_id: "account-id",
+          },
+          last_refresh: "2026-04-24T00:00:00.000Z",
+        }) + "\n",
+        "utf8",
+      );
+      const key = Buffer.alloc(32, 1);
+      const store = createStore(join(root, "store.json"));
+      const imported = await importCodexAuthDirectory(authFile, store, key, false);
+      const accounts = await store.listAccounts();
+
+      assert.equal(imported, 1);
+      assert.equal(accounts[0]?.id, "codex-auth-auth");
+      assert.equal(accounts[0]?.chatgptAccountId, "account-id");
+      assert.equal(decryptToken(accounts[0].accessTokenEncrypted, key), "access-token");
+    }
+    finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it("imports sibling auth.json when the configured Codex auth directory has no json files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-auth-import-"));
+    try {
+      const authDir = join(root, "auth");
+      await mkdir(authDir);
+      await mkdir(join(authDir, "on"));
+      await mkdir(join(authDir, "off"));
+      await writeFile(
+        join(root, "auth.json"),
+        JSON.stringify({
+          auth_mode: "chatgpt",
+          tokens: {
+            id_token: "id-token",
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            account_id: "account-id",
+          },
+          last_refresh: "2026-04-24T00:00:00.000Z",
+        }) + "\n",
+        "utf8",
+      );
+      const key = Buffer.alloc(32, 1);
+      const store = createStore(join(root, "store.json"));
+      const imported = await importCodexAuthDirectory(authDir, store, key, false);
+      const accounts = await store.listAccounts();
+
+      assert.equal(imported, 1);
+      assert.equal(accounts[0]?.id, "codex-auth-auth");
+      assert.equal(accounts[0]?.chatgptAccountId, "account-id");
+      assert.equal(decryptToken(accounts[0].accessTokenEncrypted, key), "access-token");
+    }
+    finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it("preserves newer stored accounts when auth import payloads are older", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-auth-import-"));
     try {

@@ -1,5 +1,5 @@
-import { readdir, readFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import type { Logger } from "../assets/scripts/logger.ts";
 import type { Account } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
@@ -16,11 +16,59 @@ type CodexAuthPayload = {
   last_refresh?: unknown;
 };
 
+type AuthFile = {
+  path: string;
+  fileName: string;
+};
+
 // 1. Codex auth import ――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export async function importCodexAuthDirectory(authDir: string, store: Store, encryptionKey: Buffer, autoDisableFreePlan: boolean, logger?: Logger): Promise<number> {
   logger?.info("codex_auth.import_started", { authDir });
-  const files = await readdir(authDir, { withFileTypes: true });
+  const files = await listAuthFiles(authDir, logger);
   let imported = 0;
+  for (const file of files) {
+    const account = await readCodexAuthFile(
+      file.path,
+      file.fileName,
+      encryptionKey,
+      autoDisableFreePlan,
+    );
+    if (account === null) {
+      logger?.warn("codex_auth.file_skipped", {
+        fileName: file.fileName,
+        reason: "missing_token_payload",
+      });
+      continue;
+    }
+    const merged = mergeImportedAccount(await store.getAccount(account.id), account);
+    await store.upsertAccount(merged);
+    logger?.info("codex_auth.account_imported", {
+      fileName: file.fileName,
+      accountId: merged.id,
+      accountName: merged.email ?? merged.id,
+      chatgptAccountIdPresent: merged.chatgptAccountId !== null,
+    });
+    imported += 1;
+  }
+  logger?.info("codex_auth.import_completed", { imported });
+  return imported;
+}
+
+// 1-1. Auth files list
+async function listAuthFiles(authPath: string, logger?: Logger): Promise<AuthFile[]> {
+  const info = await stat(authPath);
+  if (info.isFile()) {
+    if (extname(authPath).toLowerCase() !== ".json") {
+      logger?.debug("codex_auth.file_skipped", {
+        fileName: basename(authPath),
+        reason: "not_json_file",
+      });
+      return [];
+    }
+    return [{ path: authPath, fileName: basename(authPath) }];
+  }
+  const files = await readdir(authPath, { withFileTypes: true });
+  const jsonFiles: AuthFile[] = [];
   for (const file of files) {
     if (!file.isFile() || extname(file.name).toLowerCase() !== ".json") {
       logger?.debug("codex_auth.file_skipped", {
@@ -29,30 +77,32 @@ export async function importCodexAuthDirectory(authDir: string, store: Store, en
       });
       continue;
     }
-    const account = await readCodexAuthFile(
-      join(authDir, file.name),
-      file.name,
-      encryptionKey,
-      autoDisableFreePlan,
-    );
-    if (account === null) {
-      logger?.warn("codex_auth.file_skipped", {
-        fileName: file.name,
-        reason: "missing_token_payload",
-      });
-      continue;
-    }
-    const merged = mergeImportedAccount(await store.getAccount(account.id), account);
-    await store.upsertAccount(merged);
-    logger?.info("codex_auth.account_imported", {
-      fileName: file.name,
-      accountId: merged.id,
-      chatgptAccountIdPresent: merged.chatgptAccountId !== null,
-    });
-    imported += 1;
+    jsonFiles.push({ path: join(authPath, file.name), fileName: file.name });
   }
-  logger?.info("codex_auth.import_completed", { imported });
-  return imported;
+  if (jsonFiles.length > 0) {
+    return jsonFiles;
+  }
+  if (basename(authPath).toLowerCase() !== "auth") {
+    return [];
+  }
+  const siblingAuthFile = join(dirname(authPath), "auth.json");
+  if (!(await fileExists(siblingAuthFile))) {
+    return [];
+  }
+  logger?.info("codex_auth.sibling_file_detected", {
+    authFile: siblingAuthFile,
+  });
+  return [{ path: siblingAuthFile, fileName: "auth.json" }];
+}
+
+// 1-2. File exists
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  }
+  catch {
+    return false;
+  }
 }
 
 // 2. Auth file read ――――――――――――――――――――――――――――――――――――――――――――――――――――――――
