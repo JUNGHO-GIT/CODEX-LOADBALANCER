@@ -3,8 +3,8 @@ import { createServer, type Server } from "node:http";
 import { describe, it } from "node:test";
 import type { Settings } from "../src/assets/scripts/config.ts";
 import type { Account } from "../src/assets/type/domain/common.ts";
-import { FREE_PLAN_DEACTIVATION_REASON } from "../src/services/account-policy.ts";
-import { buildUsagePollingPlan, fetchUsage } from "../src/services/usage.ts";
+import { FPDR } from "../src/services/account-policy.ts";
+import { buildUsagePollingPlan as bldUsPlPl, fetchUsage } from "../src/services/usage.ts";
 
 // 1. Account factory ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function account(
@@ -77,18 +77,18 @@ describe("usage polling planner", () => {
     const free = account("free-active", {
       planType: "free",
     });
-    const autoDisabledFree = account("free-disabled", {
+    const atOffFr = account("free-disabled", {
       planType: "free",
       status: "deactivated",
-      deactivationReason: FREE_PLAN_DEACTIVATION_REASON,
+      deactivationReason: FPDR,
     });
     const pausedFree = account("free-paused", {
       planType: "free",
       status: "paused",
     });
 
-    const plan = buildUsagePollingPlan(
-      [paid, free, autoDisabledFree, pausedFree],
+    const plan = bldUsPlPl(
+      [paid, free, atOffFr, pausedFree],
       { tokenRefreshIntervalDays: 1 },
       new Map(),
       Date.parse("2026-04-27T00:00:00.000Z"),
@@ -115,7 +115,7 @@ describe("usage polling planner", () => {
       ["free-active", { failureCount: 2, nextAttemptAt: now + 30_000, stage: "interval_refresh" as const }],
     ]);
 
-    const plan = buildUsagePollingPlan(
+    const plan = bldUsPlPl(
       [paid, free],
       { tokenRefreshIntervalDays: 1 },
       states,
@@ -153,14 +153,14 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-function settings(upstreamBaseUrl: string): Settings {
+function settings(upBsUrl: string): Settings {
   return {
     host: "127.0.0.1",
     port: 0,
     homeDir: "",
     storePath: "",
     encryptionKeyFile: "",
-    upstreamBaseUrl,
+    upstreamBaseUrl: upBsUrl,
     authBaseUrl: "http://127.0.0.1",
     oauthClientId: "client",
     oauthScope: "openid",

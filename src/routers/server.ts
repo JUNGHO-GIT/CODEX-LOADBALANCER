@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage as IncMsg, type ServerResponse as SrvrRes } from "node:http";
 import type { Settings } from "../assets/scripts/config.ts";
 import { errorContext, type Logger } from "../assets/scripts/logger.ts";
 import type { Store } from "../repositories/store.ts";
-import { applyAccountPlanPolicy } from "../services/account-policy.ts";
-import { createAccount } from "../services/auth.ts";
+import { applyAccountPlanPolicy as appAcPlPl } from "../services/account-policy.ts";
+import { createAccount as crtAcct } from "../services/auth.ts";
 import { proxyRequest, writeJson } from "../services/proxy.ts";
-import { buildRuntimeSummary } from "../services/runtime-summary.ts";
+import { buildRuntimeSummary as bldRtSmmr } from "../services/runtime-summary.ts";
 
-export type ServerContext = {
+export declare type ServerContext = {
   settings: Settings;
   store: Store;
   encryptionKey: Buffer;
@@ -20,19 +20,19 @@ export type ServerContext = {
 export function createLoadBalancerServer(ctx: ServerContext) {
   return createServer(async (req, res) => {
     const startedAt = Date.now();
-    const requestLogger = ctx.logger.child({
+    const reqLggr = ctx.logger.child({
       requestId: randomUUID(),
       route: `${req.method ?? "GET"} ${requestPath(req)}`,
     });
-    requestLogger.info("request.received");
+    reqLggr.info("request.received");
     try {
-      await route(req, res, ctx, requestLogger);
-      requestLogger.info("request.completed", {
+      await route(req, res, ctx, reqLggr);
+      reqLggr.info("request.completed", {
         statusCode: res.statusCode,
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
-      requestLogger.error("request.failed", {
+      reqLggr.error("request.failed", {
         statusCode: 500,
         durationMs: Date.now() - startedAt,
         ...errorContext(error),
@@ -53,7 +53,7 @@ export function createLoadBalancerServer(ctx: ServerContext) {
 }
 
 // 2. Route ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function route(req: IncomingMessage, res: ServerResponse, ctx: ServerContext, logger: Logger): Promise<void> {
+async function route(req: IncMsg, res: SrvrRes, ctx: ServerContext, logger: Logger): Promise<void> {
   const path = requestPath(req);
   if (req.method === "GET" && path === "/health/live") {
     logger.debug("route.health_live");
@@ -74,7 +74,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: ServerConte
   if (req.method === "GET" && path === "/api/runtime-summary") {
     const accounts = await ctx.store.listAccounts();
     const meta = await ctx.store.getMeta();
-    const summary = buildRuntimeSummary(accounts, ctx.settings, meta);
+    const summary = bldRtSmmr(accounts, ctx.settings, meta);
     logger.info("runtime.summary_built", {
       totalAccounts: summary.counts.totalAccounts,
       activeAccounts: summary.counts.activeAccounts,
@@ -89,7 +89,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: ServerConte
       globalCooldownReason: null,
     });
     const accounts = await ctx.store.listAccounts();
-    const summary = buildRuntimeSummary(accounts, ctx.settings, meta);
+    const summary = bldRtSmmr(accounts, ctx.settings, meta);
     logger.info("runtime.global_cooldown_cleared");
     writeJson(res, 200, summary);
     return;
@@ -112,7 +112,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: ServerConte
       });
       return;
     }
-    const account = applyAccountPlanPolicy(createAccount(
+    const account = appAcPlPl(crtAcct(
       {
         email: input.email ?? null,
         accessToken: input.accessToken,
@@ -143,7 +143,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: ServerConte
 }
 
 // 3. JSON read ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readJson(req: IncMsg): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -153,6 +153,6 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 // 4. Request path ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-function requestPath(req: IncomingMessage): string {
+function requestPath(req: IncMsg): string {
   return new URL(req.url ?? "/", "http://localhost").pathname;
 }

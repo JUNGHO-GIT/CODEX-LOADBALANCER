@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Settings } from "../assets/scripts/config.ts";
 import { decryptToken, encryptToken } from "../assets/scripts/crypto.ts";
 import { errorContext, type Logger } from "../assets/scripts/logger.ts";
-import type { Account, TokenRefreshResult } from "../assets/type/domain/common.ts";
+import type { Account, TokenRefreshResult as TokRfrsRes } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
-import { applyAccountPlanPolicy, extractAccountIdentity } from "./account-policy.ts";
+import { applyAccountPlanPolicy as appAcPlPl, extractAccountIdentity as extrAcctIdnt } from "./account-policy.ts";
 
 const refreshLocks = new Map<string, Promise<Account>>();
 
@@ -51,7 +51,7 @@ export function shouldRefresh(account: Account, intervalDays: number, now: Date 
 }
 
 // 6. Access refresh ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-export async function refreshAccessToken(refreshToken: string, settings: Settings, signal?: AbortSignal): Promise<TokenRefreshResult> {
+export async function refreshAccessToken(refreshToken: string, settings: Settings, signal?: AbortSignal): Promise<TokRfrsRes> {
   const response = await fetch(`${settings.authBaseUrl.replace(/\/$/, "")}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -70,15 +70,15 @@ export async function refreshAccessToken(refreshToken: string, settings: Setting
     throw new RefreshError(code, message, isPermanentRefreshCode(code));
   }
   const accessToken = stringValue(payload.access_token);
-  const nextRefreshToken = stringValue(payload.refresh_token);
+  const nxtRfrsTok = stringValue(payload.refresh_token);
   const idToken = stringValue(payload.id_token);
-  if (!accessToken || !nextRefreshToken || !idToken) {
+  if (!accessToken || !nxtRfrsTok || !idToken) {
     throw new RefreshError("invalid_response", "Refresh response missing tokens", false);
   }
-  const identity = extractAccountIdentity({ accessToken, idToken });
+  const identity = extrAcctIdnt({ accessToken, idToken });
   return {
     accessToken,
-    refreshToken: nextRefreshToken,
+    refreshToken: nxtRfrsTok,
     idToken,
     accountId: identity.chatgptAccountId,
     planType: identity.planType,
@@ -106,7 +106,7 @@ export async function ensureFreshAccount(account: Account, store: Store, setting
   }
   const existing = refreshLocks.get(current.id);
   if (existing !== undefined) {
-    const waitStartedAt = Date.now();
+    const wtStrtAt = Date.now();
     logger?.debug("token_refresh.joined", {
       accountId: current.id,
       force,
@@ -115,7 +115,7 @@ export async function ensureFreshAccount(account: Account, store: Store, setting
     const joined = await existing;
     logger?.debug("token_refresh.joined_completed", {
       accountId: current.id,
-      waitMs: Date.now() - waitStartedAt,
+      waitMs: Date.now() - wtStrtAt,
     });
     return joined;
   }
@@ -144,7 +144,7 @@ async function refreshAndStoreAccount(account: Account, store: Store, settings: 
     const result = await refreshAccessToken(refreshToken, settings, controller.signal);
     const nextPlanType = result.planType ?? account.planType;
     const planChanged = nextPlanType !== account.planType;
-    const updated = applyAccountPlanPolicy({
+    const updated = appAcPlPl({
       ...account,
       accessTokenEncrypted: encryptToken(result.accessToken, key),
       refreshTokenEncrypted: encryptToken(result.refreshToken, key),
@@ -222,7 +222,7 @@ export function createAccount(
   },
   key: Buffer,
 ): Account {
-  const identity = extractAccountIdentity({
+  const identity = extrAcctIdnt({
     accessToken: input.accessToken,
     idToken: input.idToken,
   });

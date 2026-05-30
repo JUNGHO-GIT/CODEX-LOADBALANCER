@@ -1,17 +1,17 @@
-import type { Account, AccountStatus } from "../assets/type/domain/common.ts";
-import { isBalancerExcludedAccount } from "./account-policy.ts";
+import type { Account, AccountStatus as AcctStat } from "../assets/type/domain/common.ts";
+import { isBalancerExcludedAccount as isBaExAc } from "./account-policy.ts";
 
-export const PREFERRED_HIGH_CAPABILITY_MODEL = "gpt-5.5";
-export const FALLBACK_HIGH_CAPABILITY_MODEL = "gpt-5.4";
+export const PHCM = "gpt-5.5";
+export const FHCM = "gpt-5.4";
 
-export type SelectionResult = {
+export declare type SelectionResult = {
   account: Account | null;
   message: string | null;
 };
 
-export type ModelSupportState = "supported" | "unsupported" | "unknown";
+export declare type ModelSupportState = "supported" | "unsupported" | "unknown";
 
-export type RankOptions = {
+export declare type RankOptions = {
   excludeCooled?: boolean;
   requestedModel?: string | null;
   preferredModel?: string | null;
@@ -31,8 +31,8 @@ type RankedAccount = {
 // 1. Account select ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export function selectAccount(accounts: Account[], now: number = Date.now() / 1000): SelectionResult {
   const ranked = rankAccounts(accounts, now, {
-    preferredModel: PREFERRED_HIGH_CAPABILITY_MODEL,
-    fallbackModel: FALLBACK_HIGH_CAPABILITY_MODEL,
+    preferredModel: PHCM,
+    fallbackModel: FHCM,
   });
   if (ranked.length === 0) {
     return { account: null, message: "No active accounts available" };
@@ -48,7 +48,7 @@ export function selectAccount(accounts: Account[], now: number = Date.now() / 10
 export function rankAccounts(accounts: Account[], now: number = Date.now() / 1000, options: RankOptions = {}): Account[] {
   const base = accounts
     .filter(isAvailable)
-    .filter((account) => !isBalancerExcludedAccount(account))
+    .filter((account) => !isBaExAc(account))
     .map((account) => createRankedAccount(account, now, options))
     .toSorted(compareRankedAccount)
     .map((entry) => entry.account);
@@ -63,7 +63,7 @@ export function rankAccounts(accounts: Account[], now: number = Date.now() / 100
 // OpenAI가 여러 ChatGPT 계정을 device/IP 기준으로 묶어 throttle할 때, 반환되는
 // resets_at이 모든 계정에서 ms 단위로 동일해지는 패턴을 감지한다.
 // 허용 오차를 두어 epoch가 근사하면 같은 윈도로 취급한다.
-export function detectSharedResetEpoch(epochs: number[], toleranceSeconds = 1): number | null {
+export function detectSharedResetEpoch(epochs: number[], tlrnScnd = 1): number | null {
   const finite = epochs.filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
   if (finite.length < 2) {
     return null;
@@ -71,7 +71,7 @@ export function detectSharedResetEpoch(epochs: number[], toleranceSeconds = 1): 
   const sorted = [...finite].toSorted((a, b) => a - b);
   const first = sorted[0] ?? 0;
   const last = sorted[sorted.length - 1] ?? 0;
-  if (last - first > toleranceSeconds) {
+  if (last - first > tlrnScnd) {
     return null;
   }
   return Math.floor(last);
@@ -101,8 +101,8 @@ export function recordSuccess(account: Account, now: number = Date.now() / 1000)
 }
 
 // 3-1. Rate-limit record ―――――――――――――――――――――――――――――――――――――――――――――――――――
-export function markRateLimited(account: Account, retryAfterSeconds: number, now: number = Date.now() / 1000, status: AccountStatus = "rate_limited"): Account {
-  const cooldown = now + Math.max(60, Math.floor(retryAfterSeconds));
+export function markRateLimited(account: Account, rtryAftrScnd: number, now: number = Date.now() / 1000, status: AcctStat = "rate_limited"): Account {
+  const cooldown = now + Math.max(60, Math.floor(rtryAftrScnd));
   return {
     ...account,
     status,
@@ -146,11 +146,11 @@ function isAvailable(account: Account): boolean {
 
 // 5. Ranked account create ―――――――――――――――――――――――――――――――――――――――――――――――――――――
 function createRankedAccount(account: Account, now: number, options: RankOptions): RankedAccount {
-  const cooldownUntil = (account.cooldownUntil ?? 0) > now ? (account.cooldownUntil ?? 0) : 0;
+  const cldwUntl = (account.cooldownUntil ?? 0) > now ? (account.cooldownUntil ?? 0) : 0;
   return {
     account,
-    cooldownUntil,
-    isCooling: cooldownUntil > 0,
+    cooldownUntil: cldwUntl,
+    isCooling: cldwUntl > 0,
     modelPriority: getModelPriority(account, options),
     usage: account.secondaryUsedPercent ?? account.usedPercent ?? 0,
     errorCount: account.errorCount,
@@ -207,30 +207,30 @@ export function filterAccountsForModel(accounts: Account[], model: string | null
 
 // 5-5. Model priority
 function getModelPriority(account: Account, options: RankOptions): number {
-  const preferredModel = options.preferredModel ?? PREFERRED_HIGH_CAPABILITY_MODEL;
-  const fallbackModel = options.fallbackModel ?? FALLBACK_HIGH_CAPABILITY_MODEL;
-  const requestedModel = options.requestedModel ?? null;
-  if (requestedModel !== null) {
-    return getRequestedModelPriority(account, requestedModel, preferredModel, fallbackModel);
+  const prefMdl = options.preferredModel ?? PHCM;
+  const fbMdl = options.fallbackModel ?? FHCM;
+  const rqstMdl = options.requestedModel ?? null;
+  if (rqstMdl !== null) {
+    return getRequestedModelPriority(account, rqstMdl, prefMdl, fbMdl);
   }
-  return getImplicitModelPriority(account, preferredModel, fallbackModel);
+  return getImplicitModelPriority(account, prefMdl, fbMdl);
 }
 
 // 5-6. Requested model priority
-function getRequestedModelPriority(account: Account, requestedModel: string, preferredModel: string, fallbackModel: string): number {
-  const requestedState = getModelSupportState(account, requestedModel);
-  if (requestedState === "supported") {
+function getRequestedModelPriority(account: Account, rqstMdl: string, prefMdl: string, fbMdl: string): number {
+  const rqstSt = getModelSupportState(account, rqstMdl);
+  if (rqstSt === "supported") {
     return 0;
   }
-  if (requestedState === "unknown") {
+  if (rqstSt === "unknown") {
     return 1;
   }
-  if (requestedModel === preferredModel) {
-    const fallbackState = getModelSupportState(account, fallbackModel);
-    if (fallbackState === "supported") {
+  if (rqstMdl === prefMdl) {
+    const fbSt = getModelSupportState(account, fbMdl);
+    if (fbSt === "supported") {
       return 2;
     }
-    if (fallbackState === "unknown") {
+    if (fbSt === "unknown") {
       return 3;
     }
   }
@@ -238,19 +238,19 @@ function getRequestedModelPriority(account: Account, requestedModel: string, pre
 }
 
 // 5-7. Implicit model priority
-function getImplicitModelPriority(account: Account, preferredModel: string, fallbackModel: string): number {
-  const preferredState = getModelSupportState(account, preferredModel);
-  const fallbackState = getModelSupportState(account, fallbackModel);
-  if (preferredState === "supported") {
+function getImplicitModelPriority(account: Account, prefMdl: string, fbMdl: string): number {
+  const prefSt = getModelSupportState(account, prefMdl);
+  const fbSt = getModelSupportState(account, fbMdl);
+  if (prefSt === "supported") {
     return 0;
   }
-  if (preferredState === "unknown") {
-    return fallbackState === "supported" ? 1 : 2;
+  if (prefSt === "unknown") {
+    return fbSt === "supported" ? 1 : 2;
   }
-  if (fallbackState === "supported") {
+  if (fbSt === "supported") {
     return 3;
   }
-  if (fallbackState === "unknown") {
+  if (fbSt === "unknown") {
     return 4;
   }
   return 5;

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { Settings } from "../src/assets/scripts/config.ts";
 import { createStore } from "../src/repositories/store.ts";
-import { createAccount, ensureFreshAccount, RefreshError, refreshAccessToken } from "../src/services/auth.ts";
+import { createAccount as crtAcct, ensureFreshAccount as ensrFrshAcct, RefreshError, refreshAccessToken as rfrsAccsTok } from "../src/services/auth.ts";
 
 const servers: Server[] = [];
 
@@ -31,7 +31,7 @@ describe("auth refresh", () => {
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
       const account = {
-        ...createAccount({
+        ...crtAcct({
           id: "account-a",
           accessToken: "access-token",
           refreshToken: "refresh-token",
@@ -41,7 +41,7 @@ describe("auth refresh", () => {
       };
       await store.upsertAccount(account);
 
-      const refreshed = await ensureFreshAccount(account, store, settings(root, authPort), key, false);
+      const refreshed = await ensrFrshAcct(account, store, settings(root, authPort), key, false);
       const stored = await store.getAccount(account.id);
 
       assert.equal(refreshed.status, "active");
@@ -69,7 +69,7 @@ describe("auth refresh", () => {
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
       const account = {
-        ...createAccount({
+        ...crtAcct({
           id: "account-a",
           accessToken: "access-token",
           refreshToken: "refresh-token",
@@ -80,7 +80,7 @@ describe("auth refresh", () => {
       await store.upsertAccount(account);
 
       await assert.rejects(
-        ensureFreshAccount(account, store, settings(root, authPort), key, true),
+        ensrFrshAcct(account, store, settings(root, authPort), key, true),
         (error: unknown) => error instanceof RefreshError && error.code === "refresh_token_reused",
       );
       const stored = await store.getAccount(account.id);
@@ -101,7 +101,7 @@ describe("auth refresh", () => {
       });
       const authPort = await listen(auth);
 
-      await assert.rejects(refreshAccessToken("refresh-token", settings(root, authPort)), (error: unknown) => error instanceof RefreshError && error.code === "invalid_response");
+      await assert.rejects(rfrsAccsTok("refresh-token", settings(root, authPort)), (error: unknown) => error instanceof RefreshError && error.code === "invalid_response");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -1,13 +1,13 @@
 import type { Settings } from "../assets/scripts/config.ts";
-import type { Account, RuntimeSummary, StoreMeta } from "../assets/type/domain/common.ts";
+import type { Account, RuntimeSummary as RtSmmr, StoreMeta } from "../assets/type/domain/common.ts";
 import {
-  FREE_PLAN_DEACTIVATION_REASON,
-  isBalancerExcludedAccount,
+  FPDR,
+  isBalancerExcludedAccount as isBaExAc,
 } from "./account-policy.ts";
 import {
-  FALLBACK_HIGH_CAPABILITY_MODEL,
-  getModelSupportState,
-  PREFERRED_HIGH_CAPABILITY_MODEL,
+  FHCM,
+  getModelSupportState as gtMdlSupSt,
+  PHCM,
 } from "./balancer.ts";
 
 // 1. Runtime summary build ――――――――――――――――――――――――――――――――――――――――――――――――――――――
@@ -26,21 +26,21 @@ export function buildRuntimeSummary(
     | "autoDisableFreePlan"
   >,
   meta: StoreMeta,
-): RuntimeSummary {
+): RtSmmr {
   const cooldown = cooldownSummary(settings.globalCooldownEnabled, meta);
-  const autoDisabledFreeAccounts = accounts.filter((account) => account.deactivationReason === FREE_PLAN_DEACTIVATION_REASON).length;
-  const balancerVisibleAccounts = accounts.filter((account) => !isBalancerExcludedAccount(account));
-  const learnedAccounts = balancerVisibleAccounts.filter(isCapabilityLearned).length;
-  const unknownCapabilityAccounts = balancerVisibleAccounts.filter((account) => !isCapabilityLearned(account)).length;
-  const preferredReadyAccounts = balancerVisibleAccounts.filter((account) => getModelSupportState(account, PREFERRED_HIGH_CAPABILITY_MODEL) === "supported").length;
-  const fallbackReadyAccounts = balancerVisibleAccounts.filter((account) => getModelSupportState(account, FALLBACK_HIGH_CAPABILITY_MODEL) === "supported").length;
-  const fallbackOnlyAccounts = balancerVisibleAccounts.filter((account) => {
-    const preferredState = getModelSupportState(account, PREFERRED_HIGH_CAPABILITY_MODEL);
-    const fallbackState = getModelSupportState(account, FALLBACK_HIGH_CAPABILITY_MODEL);
-    return preferredState !== "supported" && fallbackState === "supported";
+  const atOffFrAccts = accounts.filter((account) => account.deactivationReason === FPDR).length;
+  const balVisAccts = accounts.filter((account) => !isBaExAc(account));
+  const lrndAccts = balVisAccts.filter(isCapabilityLearned).length;
+  const unknCapAccts = balVisAccts.filter((account) => !isCapabilityLearned(account)).length;
+  const prefRdyAccts = balVisAccts.filter((account) => gtMdlSupSt(account, PHCM) === "supported").length;
+  const fbRdyAccts = balVisAccts.filter((account) => gtMdlSupSt(account, FHCM) === "supported").length;
+  const fbOnlyAccts = balVisAccts.filter((account) => {
+    const prefSt = gtMdlSupSt(account, PHCM);
+    const fbSt = gtMdlSupSt(account, FHCM);
+    return prefSt !== "supported" && fbSt === "supported";
   }).length;
-  const blockedPreferredAccounts = balancerVisibleAccounts.filter((account) => getModelSupportState(account, PREFERRED_HIGH_CAPABILITY_MODEL) === "unsupported").length;
-  const blockedFallbackAccounts = balancerVisibleAccounts.filter((account) => getModelSupportState(account, FALLBACK_HIGH_CAPABILITY_MODEL) === "unsupported").length;
+  const blcPrAc = balVisAccts.filter((account) => gtMdlSupSt(account, PHCM) === "unsupported").length;
+  const blckFbAccts = balVisAccts.filter((account) => gtMdlSupSt(account, FHCM) === "unsupported").length;
   return {
     settings: {
       proxyRequestBudgetSeconds: settings.proxyRequestBudgetSeconds,
@@ -52,31 +52,31 @@ export function buildRuntimeSummary(
       usagePollConcurrency: settings.usagePollConcurrency,
       usagePollJitterMs: settings.usagePollJitterMs,
       autoDisableFreePlan: settings.autoDisableFreePlan,
-      preferredHighCapabilityModel: PREFERRED_HIGH_CAPABILITY_MODEL,
-      fallbackHighCapabilityModel: FALLBACK_HIGH_CAPABILITY_MODEL,
+      preferredHighCapabilityModel: PHCM,
+      fallbackHighCapabilityModel: FHCM,
     },
     cooldown,
     counts: {
       totalAccounts: accounts.length,
-      activeAccounts: balancerVisibleAccounts.filter((account) => account.status === "active").length,
-      autoDisabledFreeAccounts,
-      learnedAccounts,
-      unknownCapabilityAccounts,
+      activeAccounts: balVisAccts.filter((account) => account.status === "active").length,
+      autoDisabledFreeAccounts: atOffFrAccts,
+      learnedAccounts: lrndAccts,
+      unknownCapabilityAccounts: unknCapAccts,
     },
     models: {
-      preferredReadyAccounts,
-      fallbackReadyAccounts,
-      fallbackOnlyAccounts,
-      blockedPreferredAccounts,
-      blockedFallbackAccounts,
+      preferredReadyAccounts: prefRdyAccts,
+      fallbackReadyAccounts: fbRdyAccts,
+      fallbackOnlyAccounts: fbOnlyAccts,
+      blockedPreferredAccounts: blcPrAc,
+      blockedFallbackAccounts: blckFbAccts,
     },
   };
 }
 
 // 1-1. Cooldown summary
-function cooldownSummary(globalCooldownEnabled: boolean, meta: StoreMeta): RuntimeSummary["cooldown"] {
+function cooldownSummary(glblCldwOn: boolean, meta: StoreMeta): RtSmmr["cooldown"] {
   const nowSeconds = Date.now() / 1000;
-  const active = globalCooldownEnabled && meta.globalCooldownUntil !== null && meta.globalCooldownUntil > nowSeconds;
+  const active = glblCldwOn && meta.globalCooldownUntil !== null && meta.globalCooldownUntil > nowSeconds;
   return {
     active,
     retryAfterSeconds: active ? Math.max(1, Math.floor((meta.globalCooldownUntil ?? nowSeconds) - nowSeconds)) : null,

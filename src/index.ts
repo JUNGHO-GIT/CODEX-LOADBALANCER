@@ -5,21 +5,21 @@
  * @since 2026-4-25
  */
 
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream as crtWrtStrm, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { ensureEncryptionKey, loadSettings } from "@assets/scripts/config.ts";
+import { ensureEncryptionKey as ensrEncrKy, loadSettings } from "@assets/scripts/config.ts";
 import { createLogger, errorContext } from "@assets/scripts/logger.ts";
 import { createStore } from "@repositories/store.ts";
-import { createLoadBalancerServer } from "@routers/server.ts";
-import { reconcileAccountPolicies } from "@services/account-policy.ts";
-import { importCodexAuthDirectory } from "@services/codex-auth.ts";
-import { startUsagePolling } from "@services/usage.ts";
+import { createLoadBalancerServer as crtLdBalSrvr } from "@routers/server.ts";
+import { reconcileAccountPolicies as rcncAcctPlcs } from "@services/account-policy.ts";
+import { importCodexAuthDirectory as impCdAtDi } from "@services/codex-auth.ts";
+import { startUsagePolling as strtUsgPlln } from "@services/usage.ts";
 
 // 0. File sink ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function createTeeSink(filePath: string) {
   mkdirSync(dirname(filePath), { recursive: true });
   const ansi = /\[[0-9;]*m/g;
-  const stream = createWriteStream(filePath, { flags: "a" });
+  const stream = crtWrtStrm(filePath, { flags: "a" });
   stream.on("error", () => undefined);
   const write = (line: string) => {
     try {
@@ -69,23 +69,23 @@ async function main(): Promise<void> {
     codexAuthImportEnabled: settings.codexAuthDir !== null,
     autoDisableFreePlan: settings.autoDisableFreePlan,
   });
-  const encryptionKey = await ensureEncryptionKey(settings);
+  const encrKy = await ensrEncrKy(settings);
   const store = createStore(settings.storePath);
   if (settings.codexAuthDir !== null) {
-    const imported = await importCodexAuthDirectory(
+    const imported = await impCdAtDi(
       settings.codexAuthDir,
       store,
-      encryptionKey,
+      encrKy,
       settings.autoDisableFreePlan,
       logger,
     );
     logger.info("codex_auth.import_finished", { imported });
   }
-  const policyUpdates = await reconcileAccountPolicies(store, settings);
-  logger.info("account_policy.reconciled", { updatedCount: policyUpdates });
-  const server = createLoadBalancerServer({
+  const plcyUpdt = await rcncAcctPlcs(store, settings);
+  logger.info("account_policy.reconciled", { updatedCount: plcyUpdt });
+  const server = crtLdBalSrvr({
     settings,
-    encryptionKey,
+    encryptionKey: encrKy,
     store,
     logger,
     upstreamBase: settings.upstreamBaseUrl.replace(/\/$/, ""),
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       url: `http://${settings.host}:${settings.port}`,
     });
   });
-  startUsagePolling(store, settings, encryptionKey, logger);
+  strtUsgPlln(store, settings, encrKy, logger);
   logger.info("usage_poll.scheduled", {
     intervalSeconds: settings.usagePollIntervalSeconds,
   });

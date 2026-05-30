@@ -2,9 +2,9 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { type LogLevel, parseLogLevel } from "./logger.ts";
+import { type LogLevel, parseLogLevel as prsLgLvl } from "./logger.ts";
 
-export type Settings = {
+export declare type Settings = {
   host: string;
   port: number;
   homeDir: string;
@@ -68,7 +68,7 @@ export function loadSettings(): Settings {
     proxyMaxBodyBytes: readIntEnv("CODEX_LB_PROXY_MAX_BODY_BYTES", 10_485_760),
     apiKeyAuthEnabled: readBoolEnv("CODEX_LB_API_KEY_AUTH_ENABLED", false),
     codexAuthDir: codexAuthDir === null ? null : expandPath(codexAuthDir),
-    logLevel: parseLogLevel(readOptionalEnv("CODEX_LB_LOG_LEVEL"), "info"),
+    logLevel: prsLgLvl(readOptionalEnv("CODEX_LB_LOG_LEVEL"), "info"),
     parallelConcurrency: readIntEnv("CODEX_LB_PARALLEL_CONCURRENCY", 2),
     parallelStaggerMs: readIntEnv("CODEX_LB_PARALLEL_STAGGER_MS", 150),
     globalCooldownEnabled: readBoolEnv(

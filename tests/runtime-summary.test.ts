@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Account, StoreMeta } from "../src/assets/type/domain/common.ts";
-import { buildRuntimeSummary } from "../src/services/runtime-summary.ts";
+import { buildRuntimeSummary as bldRtSmmr } from "../src/services/runtime-summary.ts";
 
 // 1. Account factory ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 function account(
@@ -38,7 +38,7 @@ describe("runtime summary", () => {
       globalCooldownUntil: null,
       globalCooldownReason: null,
     };
-    const summary = buildRuntimeSummary(
+    const summary = bldRtSmmr(
       [
         account("paid-plus", { planType: "plus" }),
         account("free-active", { planType: "free" }),

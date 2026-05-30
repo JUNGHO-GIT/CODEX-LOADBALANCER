@@ -2,10 +2,10 @@ import type { Settings } from "../assets/scripts/config.ts";
 import type { Account } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
 
-export const FREE_PLAN_DEACTIVATION_REASON =
+export const FPDR =
   "Automatically deactivated because free-plan accounts are excluded from the balancer";
 
-export type AccountIdentity = {
+export declare type AccountIdentity = {
   email: string | null;
   chatgptAccountId: string | null;
   planType: string | null;
@@ -22,12 +22,12 @@ export function extractAccountIdentity(tokens: {
     accessClaims?.["https://api.openai.com/auth"] ??
       idClaims?.["https://api.openai.com/auth"],
   );
-  const profileClaims = objectValue(accessClaims?.["https://api.openai.com/profile"]);
+  const prflClms = objectValue(accessClaims?.["https://api.openai.com/profile"]);
   return {
     email:
       stringValue(idClaims?.email) ??
       stringValue(accessClaims?.email) ??
-      stringValue(profileClaims?.email),
+      stringValue(prflClms?.email),
     chatgptAccountId: stringValue(authClaims?.chatgpt_account_id),
     planType: normalizePlanType(stringValue(authClaims?.chatgpt_plan_type)),
   };
@@ -68,7 +68,7 @@ export function isAutoDisabledFreePlanAccount(
 ): boolean {
   return (
     account.status === "deactivated" &&
-    account.deactivationReason === FREE_PLAN_DEACTIVATION_REASON
+    account.deactivationReason === FPDR
   );
 }
 
@@ -82,15 +82,15 @@ export function shouldReevaluateFreePlanAccount(
 // 8. Account plan policy apply ―――――――――――――――――――――――――――――――――――――――――――――――――
 export function applyAccountPlanPolicy(
   account: Account,
-  autoDisableFreePlan: boolean,
+  atDsblFrPln: boolean,
 ): Account {
   const nextPlanType = normalizePlanType(account.planType);
   const nextAccount =
     nextPlanType === account.planType ? account : { ...account, planType: nextPlanType };
-  const isAutoDisabled = nextAccount.deactivationReason === FREE_PLAN_DEACTIVATION_REASON;
+  const isAtOff = nextAccount.deactivationReason === FPDR;
 
-  if (!autoDisableFreePlan || !isFreePlan(nextPlanType)) {
-    if (!isAutoDisabled) {
+  if (!atDsblFrPln || !isFreePlan(nextPlanType)) {
+    if (!isAtOff) {
       return nextAccount;
     }
     return {
@@ -100,19 +100,19 @@ export function applyAccountPlanPolicy(
     };
   }
 
-  if (nextAccount.status === "deactivated" && !isAutoDisabled) {
+  if (nextAccount.status === "deactivated" && !isAtOff) {
     return nextAccount;
   }
   if (
     nextAccount.status === "deactivated" &&
-    nextAccount.deactivationReason === FREE_PLAN_DEACTIVATION_REASON
+    nextAccount.deactivationReason === FPDR
   ) {
     return nextAccount;
   }
   return {
     ...nextAccount,
     status: "deactivated",
-    deactivationReason: FREE_PLAN_DEACTIVATION_REASON,
+    deactivationReason: FPDR,
   };
 }
 

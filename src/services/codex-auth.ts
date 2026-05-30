@@ -4,10 +4,10 @@ import type { Logger } from "../assets/scripts/logger.ts";
 import type { Account } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
 import {
-  applyAccountPlanPolicy,
-  extractAccountIdentity,
+  applyAccountPlanPolicy as appAcPlPl,
+  extractAccountIdentity as extrAcctIdnt,
 } from "./account-policy.ts";
-import { createAccount } from "./auth.ts";
+import { createAccount as crtAcct } from "./auth.ts";
 
 type CodexAuthPayload = {
   auth_mode?: unknown;
@@ -22,7 +22,7 @@ type AuthFile = {
 };
 
 // 1. Codex auth import ――――――――――――――――――――――――――――――――――――――――――――――――――――――
-export async function importCodexAuthDirectory(authDir: string, store: Store, encryptionKey: Buffer, autoDisableFreePlan: boolean, logger?: Logger): Promise<number> {
+export async function importCodexAuthDirectory(authDir: string, store: Store, encrKy: Buffer, atDsblFrPln: boolean, logger?: Logger): Promise<number> {
   logger?.info("codex_auth.import_started", { authDir });
   const files = await listAuthFiles(authDir, logger);
   let imported = 0;
@@ -30,8 +30,8 @@ export async function importCodexAuthDirectory(authDir: string, store: Store, en
     const account = await readCodexAuthFile(
       file.path,
       file.fileName,
-      encryptionKey,
-      autoDisableFreePlan,
+      encrKy,
+      atDsblFrPln,
     );
     if (account === null) {
       logger?.warn("codex_auth.file_skipped", {
@@ -85,14 +85,14 @@ async function listAuthFiles(authPath: string, logger?: Logger): Promise<AuthFil
   if (basename(authPath).toLowerCase() !== "auth") {
     return [];
   }
-  const siblingAuthFile = join(dirname(authPath), "auth.json");
-  if (!(await fileExists(siblingAuthFile))) {
+  const sblnAthFl = join(dirname(authPath), "auth.json");
+  if (!(await fileExists(sblnAthFl))) {
     return [];
   }
   logger?.info("codex_auth.sibling_file_detected", {
-    authFile: siblingAuthFile,
+    authFile: sblnAthFl,
   });
-  return [{ path: siblingAuthFile, fileName: "auth.json" }];
+  return [{ path: sblnAthFl, fileName: "auth.json" }];
 }
 
 // 1-2. File exists
@@ -106,16 +106,16 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 // 2. Auth file read ――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function readCodexAuthFile(path: string, fileName: string, encryptionKey: Buffer, autoDisableFreePlan: boolean): Promise<Account | null> {
+async function readCodexAuthFile(path: string, fileName: string, encrKy: Buffer, atDsblFrPln: boolean): Promise<Account | null> {
   const payload = parsePayload(await readFile(path, "utf8"));
   if (payload === null) {
     return null;
   }
-  return accountFromPayload(payload, fileName, encryptionKey, autoDisableFreePlan);
+  return accountFromPayload(payload, fileName, encrKy, atDsblFrPln);
 }
 
 // 3. Account map ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-function accountFromPayload(payload: CodexAuthPayload, fileName: string, encryptionKey: Buffer, autoDisableFreePlan: boolean): Account | null {
+function accountFromPayload(payload: CodexAuthPayload, fileName: string, encrKy: Buffer, atDsblFrPln: boolean): Account | null {
   const tokens = objectValue(payload.tokens);
   const accessToken = stringValue(tokens?.access_token);
   const refreshToken = stringValue(tokens?.refresh_token);
@@ -123,8 +123,8 @@ function accountFromPayload(payload: CodexAuthPayload, fileName: string, encrypt
   if (accessToken === null || refreshToken === null || idToken === null) {
     return null;
   }
-  const identity = extractAccountIdentity({ accessToken, idToken });
-  const account = createAccount(
+  const identity = extrAcctIdnt({ accessToken, idToken });
+  const account = crtAcct(
     {
       id: stableAccountId(fileName),
       email: identity.email ?? basename(fileName, extname(fileName)),
@@ -134,12 +134,12 @@ function accountFromPayload(payload: CodexAuthPayload, fileName: string, encrypt
       chatgptAccountId: identity.chatgptAccountId ?? stringValue(tokens?.account_id),
       planType: identity.planType,
     },
-    encryptionKey,
+    encrKy,
   );
-  return applyAccountPlanPolicy({
+  return appAcPlPl({
     ...account,
     lastRefresh: stringValue(payload.last_refresh) ?? account.lastRefresh,
-  }, autoDisableFreePlan);
+  }, atDsblFrPln);
 }
 
 // 4. Imported account merge ―――――――――――――――――――――――――――――――――――――――――――――――

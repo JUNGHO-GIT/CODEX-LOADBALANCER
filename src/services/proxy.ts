@@ -1,27 +1,27 @@
 import { createHash } from "node:crypto";
-import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingHttpHeaders as IncHttpHdrs, IncomingMessage as IncMsg, ServerResponse as SrvrRes } from "node:http";
 import type { Settings } from "../assets/scripts/config.ts";
 import { decryptToken } from "../assets/scripts/crypto.ts";
 import { errorContext, type Logger } from "../assets/scripts/logger.ts";
-import type { Account, ProxyErrorPayload } from "../assets/type/domain/common.ts";
+import type { Account, ProxyErrorPayload as PrxyErrPyld } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
-import { ensureFreshAccount, RefreshError } from "./auth.ts";
+import { ensureFreshAccount as ensrFrshAcct, RefreshError } from "./auth.ts";
 import {
-  detectSharedResetEpoch,
-  FALLBACK_HIGH_CAPABILITY_MODEL,
-  filterAccountsForModel,
-  isKnownUnsupportedModel,
-  markRateLimited,
-  PREFERRED_HIGH_CAPABILITY_MODEL,
+  detectSharedResetEpoch as dtcShRsEp,
+  FHCM,
+  filterAccountsForModel as fltAcFrMd,
+  isKnownUnsupportedModel as isKnUnMd,
+  markRateLimited as mrkRtLmtd,
+  PHCM,
   rankAccounts,
-  recordModelUnsupported,
-  recordSuccess,
-  recordSupportedModels,
-  recordTransientError,
+  recordModelUnsupported as recMdlUnsup,
+  recordSuccess as recSccs,
+  recordSupportedModels as recSupMdls,
+  recordTransientError as recTransErr,
 } from "./balancer.ts";
-import { importCodexAuthDirectory } from "./codex-auth.ts";
+import { importCodexAuthDirectory as impCdAtDi } from "./codex-auth.ts";
 
-export type ProxyContext = {
+export declare type ProxyContext = {
   settings: Settings;
   store: Store;
   encryptionKey: Buffer;
@@ -112,7 +112,7 @@ class RequestBodyTooLargeError extends Error {
 const tokenCache = new Map<string, { encrypted: string; plain: string }>();
 
 // 1. Proxy request ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-export async function proxyRequest(req: IncomingMessage, res: ServerResponse, ctx: ProxyContext): Promise<void> {
+export async function proxyRequest(req: IncMsg, res: SrvrRes, ctx: ProxyContext): Promise<void> {
   if (!(await validateApiKey(req.headers, ctx))) {
     ctx.logger.warn("proxy.auth_rejected", { reason: "invalid_api_key" });
     writeJson(res, 401, openaiError("invalid_api_key", "Invalid API key", "invalid_request_error"));
@@ -164,17 +164,17 @@ export async function proxyRequest(req: IncomingMessage, res: ServerResponse, ct
   const accounts = await ctx.store.listAccounts();
   const ranked = rankAccounts(accounts, Date.now() / 1000, {
     requestedModel: intent.requestedModel,
-    preferredModel: PREFERRED_HIGH_CAPABILITY_MODEL,
-    fallbackModel: FALLBACK_HIGH_CAPABILITY_MODEL,
+    preferredModel: PHCM,
+    fallbackModel: FHCM,
   });
   if (intent.isModelsRequest) {
     await proxyModelsRequest(ranked, req, body, res, ctx);
     return;
   }
-  const candidates = intent.requestedModel === null ? ranked : filterAccountsForModel(ranked, intent.requestedModel);
+  const candidates = intent.requestedModel === null ? ranked : fltAcFrMd(ranked, intent.requestedModel);
   if (candidates.length === 0) {
-    const fallbackHandled = await tryPreferredModelFallback(req, res, ctx, accounts, body, intent, "no_preferred_ready_accounts");
-    if (fallbackHandled) {
+    const fbHndl = await tryPreferredModelFallback(req, res, ctx, accounts, body, intent, "no_preferred_ready_accounts");
+    if (fbHndl) {
       return;
     }
     if (intent.requestedModel !== null) {
@@ -200,35 +200,35 @@ export async function proxyRequest(req: IncomingMessage, res: ServerResponse, ct
     writeJson(res, 503, openaiError("no_accounts", "No active accounts available", "server_error"));
     return;
   }
-  const initialResult = await executeProxyPass(candidates, req, createPreparedRequest(body, req.headers, intent.requestedModel, false), ctx);
-  if (await writeProxyPassResult(initialResult, res, ctx)) {
+  const intlRes = await executeProxyPass(candidates, req, createPreparedRequest(body, req.headers, intent.requestedModel, false), ctx);
+  if (await writeProxyPassResult(intlRes, res, ctx)) {
     return;
   }
-  if (initialResult.kind !== "failed") {
+  if (intlRes.kind !== "failed") {
     return;
   }
-  const fallbackHandled = await tryPreferredModelFallback(
+  const fbHndl = await tryPreferredModelFallback(
     req,
     res,
     ctx,
     await ctx.store.listAccounts(),
     body,
     intent,
-    fallbackReason(initialResult.lastError),
+    fallbackReason(intlRes.lastError),
   );
-  if (fallbackHandled) {
+  if (fbHndl) {
     return;
   }
-  if (initialResult.lastError instanceof AccountModelUnsupportedError) {
-    writeJson(res, 400, openaiError(initialResult.lastError.code, initialResult.lastError.message, "invalid_request_error"));
+  if (intlRes.lastError instanceof AccountModelUnsupportedError) {
+    writeJson(res, 400, openaiError(intlRes.lastError.code, intlRes.lastError.message, "invalid_request_error"));
     return;
   }
-  ctx.logger.error("proxy.request_failed", { ...errorContext(initialResult.lastError) });
-  writeJson(res, 502, openaiError("upstream_unavailable", errorMessage(initialResult.lastError), "server_error"));
+  ctx.logger.error("proxy.request_failed", { ...errorContext(intlRes.lastError) });
+  writeJson(res, 502, openaiError("upstream_unavailable", errorMessage(intlRes.lastError), "server_error"));
 }
 
 // 1-0-0. Content length limit check
-function contentLengthExceedsLimit(req: IncomingMessage, maxBytes: number): boolean {
+function contentLengthExceedsLimit(req: IncMsg, maxBytes: number): boolean {
   const raw = req.headers["content-length"];
   const value = Array.isArray(raw) ? raw[0] : raw;
   const size = Number.parseInt(value ?? "", 10);
@@ -237,7 +237,7 @@ function contentLengthExceedsLimit(req: IncomingMessage, maxBytes: number): bool
 
 // 1-0. Global cooldown short-circuit ―――――――――――――――――――――――――――――――――――――
 async function shortCircuitGlobalCooldown(ctx: ProxyContext): Promise<{
-  payload: ProxyErrorPayload;
+  payload: PrxyErrPyld;
   retryAfterSeconds: number;
   reason: string;
 } | null> {
@@ -253,16 +253,16 @@ async function shortCircuitGlobalCooldown(ctx: ProxyContext): Promise<{
     });
     return null;
   }
-  const retryAfterSeconds = Math.max(1, Math.floor(meta.globalCooldownUntil - nowSeconds));
+  const rtryAftrScnd = Math.max(1, Math.floor(meta.globalCooldownUntil - nowSeconds));
   return {
     payload: {
       error: {
         code: "usage_limit_reached",
-        message: `Shared account quota cooldown active for ${retryAfterSeconds}s`,
+        message: `Shared account quota cooldown active for ${rtryAftrScnd}s`,
         type: "rate_limit_error",
       },
     },
-    retryAfterSeconds,
+    retryAfterSeconds: rtryAftrScnd,
     reason: meta.globalCooldownReason ?? "shared_reset_epoch",
   };
 }
@@ -272,7 +272,7 @@ async function maybeRecordGlobalCooldown(resetEpochs: number[], ctx: ProxyContex
   if (!ctx.settings.globalCooldownEnabled) {
     return;
   }
-  const shared = detectSharedResetEpoch(resetEpochs);
+  const shared = dtcShRsEp(resetEpochs);
   if (shared === null) {
     return;
   }
@@ -287,7 +287,7 @@ async function maybeRecordGlobalCooldown(resetEpochs: number[], ctx: ProxyContex
 }
 
 // 1-0-2. Proxy pass execute ――――――――――――――――――――――――――――――――――――――――――――――――――
-async function executeProxyPass(candidates: Account[], req: IncomingMessage, prepared: PreparedRequest, ctx: ProxyContext): Promise<ProxyPassResult> {
+async function executeProxyPass(candidates: Account[], req: IncMsg, prepared: PreparedRequest, ctx: ProxyContext): Promise<ProxyPassResult> {
   const best = candidates[0] ?? null;
   if (best === null) {
     return {
@@ -296,7 +296,7 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
       resetEpochs: [],
     };
   }
-  let lastRateLimit: RateLimitInfo | null = null;
+  let lstRtLmt: RateLimitInfo | null = null;
   let lastError: unknown = null;
   const resetEpochs: number[] = [];
   const remaining = candidates.slice(1);
@@ -311,8 +311,8 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
     const outcome = await attemptAccount(best, req, prepared.body, ctx, prepared.requestedModel);
     if (outcome.response.status === 429) {
       const info = await readRateLimit(outcome.response);
-      await ctx.store.upsertAccount(markRateLimited(outcome.account, info.retryAfterSeconds));
-      lastRateLimit = info;
+      await ctx.store.upsertAccount(mrkRtLmtd(outcome.account, info.retryAfterSeconds));
+      lstRtLmt = info;
       if (info.resetAtEpoch !== null) {
         resetEpochs.push(info.resetAtEpoch);
       }
@@ -349,7 +349,7 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
       };
     }
     if (race.lastRateLimit !== null) {
-      lastRateLimit = race.lastRateLimit;
+      lstRtLmt = race.lastRateLimit;
     }
     if (race.lastError !== null) {
       lastError = race.lastError;
@@ -358,10 +358,10 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
       resetEpochs.push(epoch);
     }
   }
-  if (lastRateLimit !== null) {
+  if (lstRtLmt !== null) {
     return {
       kind: "rate_limited",
-      lastRateLimit,
+      lastRateLimit: lstRtLmt,
       resetEpochs,
     };
   }
@@ -373,9 +373,9 @@ async function executeProxyPass(candidates: Account[], req: IncomingMessage, pre
 }
 
 // 1-0-3. Proxy pass result write
-async function writeProxyPassResult(result: ProxyPassResult, res: ServerResponse, ctx: ProxyContext): Promise<boolean> {
+async function writeProxyPassResult(result: ProxyPassResult, res: SrvrRes, ctx: ProxyContext): Promise<boolean> {
   if (result.kind === "success") {
-    await ctx.store.upsertAccount(recordSuccess(result.outcome.account));
+    await ctx.store.upsertAccount(recSccs(result.outcome.account));
     ctx.logger.info("proxy.request_succeeded", {
       ...accountUsageLogContext(result.outcome.account, result.prepared),
       statusCode: result.outcome.response.status,
@@ -398,19 +398,19 @@ async function writeProxyPassResult(result: ProxyPassResult, res: ServerResponse
 
 // 1-0-4. Preferred model fallback
 async function tryPreferredModelFallback(
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: IncMsg,
+  res: SrvrRes,
   ctx: ProxyContext,
   accounts: Account[],
   body: Buffer,
   intent: RequestIntent,
   reason: string,
 ): Promise<boolean> {
-  if (intent.requestedModel !== PREFERRED_HIGH_CAPABILITY_MODEL || intent.fallbackModel === null) {
+  if (intent.requestedModel !== PHCM || intent.fallbackModel === null) {
     return false;
   }
-  const rewrittenBody = rewriteRequestModel(body, req.headers, intent.fallbackModel);
-  if (rewrittenBody === null) {
+  const rwrtBdy = rewriteRequestModel(body, req.headers, intent.fallbackModel);
+  if (rwrtBdy === null) {
     return false;
   }
   const ranked = rankAccounts(accounts, Date.now() / 1000, {
@@ -418,7 +418,7 @@ async function tryPreferredModelFallback(
     preferredModel: intent.fallbackModel,
     fallbackModel: intent.fallbackModel,
   });
-  const candidates = filterAccountsForModel(ranked, intent.fallbackModel);
+  const candidates = fltAcFrMd(ranked, intent.fallbackModel);
   if (candidates.length === 0) {
     return false;
   }
@@ -428,37 +428,37 @@ async function tryPreferredModelFallback(
     reason,
     candidateCount: candidates.length,
   });
-  const fallbackResult = await executeProxyPass(
+  const fbRes = await executeProxyPass(
     candidates,
     req,
-    createPreparedRequest(rewrittenBody, req.headers, intent.fallbackModel, true),
+    createPreparedRequest(rwrtBdy, req.headers, intent.fallbackModel, true),
     ctx,
   );
-  if (await writeProxyPassResult(fallbackResult, res, ctx)) {
+  if (await writeProxyPassResult(fbRes, res, ctx)) {
     return true;
   }
-  if (fallbackResult.kind !== "failed") {
+  if (fbRes.kind !== "failed") {
     return true;
   }
-  if (fallbackResult.lastError instanceof AccountModelUnsupportedError) {
-    writeJson(res, 400, openaiError(fallbackResult.lastError.code, fallbackResult.lastError.message, "invalid_request_error"));
+  if (fbRes.lastError instanceof AccountModelUnsupportedError) {
+    writeJson(res, 400, openaiError(fbRes.lastError.code, fbRes.lastError.message, "invalid_request_error"));
     return true;
   }
-  ctx.logger.error("proxy.request_failed", { ...errorContext(fallbackResult.lastError) });
-  writeJson(res, 502, openaiError("upstream_unavailable", errorMessage(fallbackResult.lastError), "server_error"));
+  ctx.logger.error("proxy.request_failed", { ...errorContext(fbRes.lastError) });
+  writeJson(res, 502, openaiError("upstream_unavailable", errorMessage(fbRes.lastError), "server_error"));
   return true;
 }
 
 // 1-0-5. Prepared request create
 function createPreparedRequest(
   body: Buffer,
-  headers: IncomingHttpHeaders,
-  requestedModel: string | null,
+  headers: IncHttpHdrs,
+  rqstMdl: string | null,
   usedFallback: boolean,
 ): PreparedRequest {
   return {
     body,
-    requestedModel,
+    requestedModel: rqstMdl,
     reasoningEffort: extractReasoningEffort(parseRequestJson(body, headers)),
     usedFallback,
   };
@@ -473,10 +473,10 @@ function fallbackReason(error: unknown): string {
 }
 
 // 1-1. Attempt a single account (401 auto-refresh) ――――――――――――――――――――――――
-async function attemptAccount(account: Account, req: IncomingMessage, body: Buffer, ctx: ProxyContext, requestedModel: string | null, signal?: AbortSignal): Promise<AttemptSuccess> {
+async function attemptAccount(account: Account, req: IncMsg, body: Buffer, ctx: ProxyContext, rqstMdl: string | null, signal?: AbortSignal): Promise<AttemptSuccess> {
   let response = await sendUpstream(req, body, account, ctx, false, signal);
   if (response.status !== 401) {
-    const modelError = requestedModel === null ? null : await parseModelUnsupported(response, requestedModel);
+    const modelError = rqstMdl === null ? null : await parseModelUnsupported(response, rqstMdl);
     if (modelError !== null) {
       await discardBody(response);
       throw modelError;
@@ -490,7 +490,7 @@ async function attemptAccount(account: Account, req: IncomingMessage, body: Buff
     tokenCache.delete(reloaded.id);
     signal?.throwIfAborted();
     response = await sendUpstream(req, body, reloaded, ctx, true, signal);
-    const modelError = requestedModel === null ? null : await parseModelUnsupported(response, requestedModel);
+    const modelError = rqstMdl === null ? null : await parseModelUnsupported(response, rqstMdl);
     if (modelError !== null) {
       await discardBody(response);
       throw modelError;
@@ -500,11 +500,11 @@ async function attemptAccount(account: Account, req: IncomingMessage, body: Buff
   if (isCodexAuthAccount(account) && ctx.settings.codexAuthDir !== null) {
     throw new RefreshError("codex_auth_stale", "Codex auth file did not provide a fresh token", false);
   }
-  const refreshed = await ensureFreshAccount(account, ctx.store, ctx.settings, ctx.encryptionKey, true, ctx.logger);
+  const refreshed = await ensrFrshAcct(account, ctx.store, ctx.settings, ctx.encryptionKey, true, ctx.logger);
   tokenCache.delete(refreshed.id);
   signal?.throwIfAborted();
   response = await sendUpstream(req, body, refreshed, ctx, true, signal);
-  const modelError = requestedModel === null ? null : await parseModelUnsupported(response, requestedModel);
+  const modelError = rqstMdl === null ? null : await parseModelUnsupported(response, rqstMdl);
   if (modelError !== null) {
     await discardBody(response);
     throw modelError;
@@ -517,7 +517,7 @@ async function reloadCodexAuthAccount(account: Account, ctx: ProxyContext): Prom
   if (!isCodexAuthAccount(account) || ctx.settings.codexAuthDir === null) {
     return null;
   }
-  const imported = await importCodexAuthDirectory(
+  const imported = await impCdAtDi(
     ctx.settings.codexAuthDir,
     ctx.store,
     ctx.encryptionKey,
@@ -552,14 +552,14 @@ function isCodexAuthAccount(account: Account): boolean {
 // 계정 간 동시 타격으로 OpenAI의 abuse-detection(동일 IP·계정 스위칭)이
 // 가속되는 현상을 완화하기 위해 동시성 N + staggered 지연으로 전환한다.
 // "모든 계정 시도 보장" 계약은 유지하므로 최종적으로 모두 시도된다.
-async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buffer, ctx: ProxyContext, requestedModel: string | null): Promise<RaceOutcome> {
+async function raceAccounts(accounts: Account[], req: IncMsg, body: Buffer, ctx: ProxyContext, rqstMdl: string | null): Promise<RaceOutcome> {
   const controllers = accounts.map(() => new AbortController());
-  const concurrencyLimit = Math.max(1, Math.min(ctx.settings.parallelConcurrency, accounts.length));
+  const cncrLmt = Math.max(1, Math.min(ctx.settings.parallelConcurrency, accounts.length));
   const staggerMs = Math.max(0, ctx.settings.parallelStaggerMs);
   let settled = 0;
   let launched = 0;
   let done = false;
-  let lastRateLimit: RateLimitInfo | null = null;
+  let lstRtLmt: RateLimitInfo | null = null;
   let lastError: unknown = null;
   const resetEpochs: number[] = [];
 
@@ -579,7 +579,7 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
         candidateCount: accounts.length,
         mode: "parallel",
       });
-      attemptAccount(account, req, body, ctx, requestedModel, signal)
+      attemptAccount(account, req, body, ctx, rqstMdl, signal)
         .then(async (outcome) => {
           if (done) {
             ctx.logger.debug("proxy.parallel_late_response_discarded", {
@@ -591,11 +591,11 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
           }
           if (outcome.response.status === 429) {
             const info = await readRateLimit(outcome.response);
-            lastRateLimit = info;
+            lstRtLmt = info;
             if (info.resetAtEpoch !== null) {
               resetEpochs.push(info.resetAtEpoch);
             }
-            await ctx.store.upsertAccount(markRateLimited(outcome.account, info.retryAfterSeconds));
+            await ctx.store.upsertAccount(mrkRtLmtd(outcome.account, info.retryAfterSeconds));
             ctx.logger.warn("proxy.upstream_rate_limited", {
               ...accountUsageLogContext(outcome.account),
               retryAfterSeconds: info.retryAfterSeconds,
@@ -633,12 +633,12 @@ async function raceAccounts(accounts: Account[], req: IncomingMessage, body: Buf
             launched += 1;
           } else if (settled === accounts.length) {
             done = true;
-            resolve({ kind: "exhausted", lastRateLimit, lastError, resetEpochs });
+            resolve({ kind: "exhausted", lastRateLimit: lstRtLmt, lastError, resetEpochs });
           }
         });
     };
 
-    const initial = Math.min(concurrencyLimit, accounts.length);
+    const initial = Math.min(cncrLmt, accounts.length);
     for (let i = 0; i < initial; i += 1) {
       if (i === 0 || staggerMs === 0) {
         launch(i);
@@ -667,33 +667,33 @@ function abortOtherAttempts(controllers: AbortController[], winnerIndex: number)
 }
 
 // 1-3. Error bookkeeping ――――――――――――――――――――――――――――――――――――――――――――――――
-async function handleAttemptError(account: Account, error: unknown, ctx: ProxyContext, remainingCandidates: number, mode: "primary" | "parallel" | "models"): Promise<void> {
+async function handleAttemptError(account: Account, error: unknown, ctx: ProxyContext, rmnnCndd: number, mode: "primary" | "parallel" | "models"): Promise<void> {
   if (error instanceof RefreshError && error.permanent) {
     ctx.logger.warn("proxy.permanent_refresh_failure", {
       ...accountUsageLogContext(account),
       code: error.code,
       message: error.message,
-      remainingCandidates,
+      remainingCandidates: rmnnCndd,
       mode,
     });
     return;
   }
   if (error instanceof AccountModelUnsupportedError) {
-    await ctx.store.upsertAccount(recordModelUnsupported(account, error.model));
+    await ctx.store.upsertAccount(recMdlUnsup(account, error.model));
     ctx.logger.warn("proxy.model_unsupported", {
       ...accountUsageLogContext(account),
       model: error.model,
       code: error.code,
       message: error.message,
-      remainingCandidates,
+      remainingCandidates: rmnnCndd,
       mode,
     });
     return;
   }
-  await ctx.store.upsertAccount(recordTransientError(account));
+  await ctx.store.upsertAccount(recTransErr(account));
   ctx.logger.error("proxy.account_attempt_failed", {
     ...accountUsageLogContext(account),
-    remainingCandidates,
+    remainingCandidates: rmnnCndd,
     mode,
     ...errorContext(error),
   });
@@ -711,17 +711,17 @@ async function discardBody(response: Response): Promise<void> {
 // 1-5. Rate-limit read ――――――――――――――――――――――――――――――――――――――――――――――――――――
 async function readRateLimit(response: Response): Promise<RateLimitInfo> {
   const body = Buffer.from(await response.arrayBuffer());
-  let retryAfterSeconds = 0;
+  let rtryAftrScnd = 0;
   let resetAtEpoch: number | null = null;
   const retryHeader = response.headers.get("retry-after");
   if (retryHeader !== null) {
     const seconds = Number.parseInt(retryHeader, 10);
     if (Number.isFinite(seconds) && seconds > 0) {
-      retryAfterSeconds = seconds;
+      rtryAftrScnd = seconds;
     } else {
       const epoch = Date.parse(retryHeader);
       if (Number.isFinite(epoch)) {
-        retryAfterSeconds = Math.max(0, Math.floor((epoch - Date.now()) / 1000));
+        rtryAftrScnd = Math.max(0, Math.floor((epoch - Date.now()) / 1000));
       }
     }
   }
@@ -743,45 +743,45 @@ async function readRateLimit(response: Response): Promise<RateLimitInfo> {
       } | null;
     };
     const codexResets = parsed.error?.resets_in_seconds;
-    const codexResetsAt = parsed.error?.resets_at;
+    const cdxRstsAt = parsed.error?.resets_at;
     const primary = parsed.rate_limit?.primary_window;
     const secondary = parsed.rate_limit?.secondary_window;
     const seconds = codexResets ?? primary?.reset_after_seconds ?? secondary?.reset_after_seconds;
-    if (retryAfterSeconds === 0 && typeof seconds === "number" && seconds > 0) {
-      retryAfterSeconds = Math.floor(seconds);
+    if (rtryAftrScnd === 0 && typeof seconds === "number" && seconds > 0) {
+      rtryAftrScnd = Math.floor(seconds);
     }
-    const resetAt = codexResetsAt ?? primary?.reset_at ?? secondary?.reset_at;
+    const resetAt = cdxRstsAt ?? primary?.reset_at ?? secondary?.reset_at;
     if (typeof resetAt === "number" && Number.isFinite(resetAt)) {
       resetAtEpoch = Math.floor(resetAt);
-      if (retryAfterSeconds === 0) {
-        retryAfterSeconds = Math.max(0, Math.floor(resetAt - Date.now() / 1000));
+      if (rtryAftrScnd === 0) {
+        rtryAftrScnd = Math.max(0, Math.floor(resetAt - Date.now() / 1000));
       }
     }
   } catch {
     // body is not structured JSON with rate_limit info
   }
-  if (retryAfterSeconds === 0) {
-    retryAfterSeconds = 3600;
+  if (rtryAftrScnd === 0) {
+    rtryAftrScnd = 3600;
   }
   if (resetAtEpoch === null) {
-    resetAtEpoch = Math.floor(Date.now() / 1000) + retryAfterSeconds;
+    resetAtEpoch = Math.floor(Date.now() / 1000) + rtryAftrScnd;
   }
   return {
     status: response.status,
     headers: response.headers,
     body,
-    retryAfterSeconds,
+    retryAfterSeconds: rtryAftrScnd,
     resetAtEpoch,
   };
 }
 
 // 1-6. Buffered response write ――――――――――――――――――――――――――――――――――――――――――――
-const STRIPPED_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding"]);
+const STR_RES_HDR = new Set(["content-encoding", "content-length", "transfer-encoding"]);
 
-function writeBufferedResponse(res: ServerResponse, info: RateLimitInfo): void {
+function writeBufferedResponse(res: SrvrRes, info: RateLimitInfo): void {
   res.statusCode = info.status;
   info.headers.forEach((value, key) => {
-    if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+    if (!STR_RES_HDR.has(key.toLowerCase())) {
       res.setHeader(key, value);
     }
   });
@@ -789,7 +789,7 @@ function writeBufferedResponse(res: ServerResponse, info: RateLimitInfo): void {
 }
 
 // 1-7. Models request handle ―――――――――――――――――――――――――――――――――――――――――――――――
-async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, body: Buffer, res: ServerResponse, ctx: ProxyContext): Promise<void> {
+async function proxyModelsRequest(accounts: Account[], req: IncMsg, body: Buffer, res: SrvrRes, ctx: ProxyContext): Promise<void> {
   if (accounts.length === 0) {
     ctx.logger.warn("proxy.account_unavailable", {
       reason: "No active accounts available",
@@ -798,9 +798,9 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
     writeJson(res, 503, openaiError("no_accounts", "No active accounts available", "server_error"));
     return;
   }
-  let lastRateLimit: RateLimitInfo | null = null;
+  let lstRtLmt: RateLimitInfo | null = null;
   let lastError: unknown = null;
-  let payloadTemplate: Record<string, unknown> | null = null;
+  let pyldTmpl: Record<string, unknown> | null = null;
   const models = new Map<string, Record<string, unknown>>();
   for (const account of accounts) {
     ctx.logger.info("proxy.account_selected", {
@@ -812,8 +812,8 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
       const outcome = await attemptAccount(account, req, body, ctx, null);
       if (outcome.response.status === 429) {
         const info = await readRateLimit(outcome.response);
-        await ctx.store.upsertAccount(markRateLimited(outcome.account, info.retryAfterSeconds));
-        lastRateLimit = info;
+        await ctx.store.upsertAccount(mrkRtLmtd(outcome.account, info.retryAfterSeconds));
+        lstRtLmt = info;
         ctx.logger.warn("proxy.upstream_rate_limited", {
           ...accountUsageLogContext(outcome.account),
           retryAfterSeconds: info.retryAfterSeconds,
@@ -831,9 +831,9 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
       }
       const payload = await readModelsPayload(outcome.response);
       if (payload !== null) {
-        payloadTemplate ??= payload;
+        pyldTmpl ??= payload;
         const modelIds = collectModels(payload, models);
-        const updated = recordSuccess(recordSupportedModels(outcome.account, modelIds));
+        const updated = recSccs(recSupMdls(outcome.account, modelIds));
         await ctx.store.upsertAccount(updated);
       }
     } catch (error) {
@@ -842,15 +842,15 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
     }
   }
   if (models.size > 0) {
-    const payload = payloadTemplate ?? { object: "list" };
+    const payload = pyldTmpl ?? { object: "list" };
     writeJson(res, 200, {
       ...payload,
       data: [...models.values()],
     });
     return;
   }
-  if (lastRateLimit !== null) {
-    writeBufferedResponse(res, lastRateLimit);
+  if (lstRtLmt !== null) {
+    writeBufferedResponse(res, lstRtLmt);
     return;
   }
   if (lastError instanceof AccountModelUnsupportedError) {
@@ -862,7 +862,7 @@ async function proxyModelsRequest(accounts: Account[], req: IncomingMessage, bod
 }
 
 // 2. Upstream send ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function sendUpstream(req: IncomingMessage, body: Buffer, account: Account, ctx: ProxyContext, forceRefreshed: boolean, signal?: AbortSignal): Promise<Response> {
+async function sendUpstream(req: IncMsg, body: Buffer, account: Account, ctx: ProxyContext, frcRfrs: boolean, signal?: AbortSignal): Promise<Response> {
   const accessToken = getAccessToken(account, ctx.encryptionKey);
   const headers = upstreamHeaders(req.headers, accessToken, account.chatgptAccountId);
   const url = upstreamUrl(req.url ?? "/", ctx.upstreamBase);
@@ -874,7 +874,7 @@ async function sendUpstream(req: IncomingMessage, body: Buffer, account: Account
     body: requestBody as BodyInit | undefined,
     signal,
   });
-  if (response.status === 401 && forceRefreshed) {
+  if (response.status === 401 && frcRfrs) {
     throw new Error("Upstream rejected refreshed token");
   }
   return response;
@@ -895,13 +895,13 @@ function getAccessToken(account: Account, key: Buffer): string {
 }
 
 // 3. API key check ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function validateApiKey(headers: IncomingHttpHeaders, ctx: ProxyContext): Promise<boolean> {
+async function validateApiKey(headers: IncHttpHdrs, ctx: ProxyContext): Promise<boolean> {
   if (!ctx.settings.apiKeyAuthEnabled) {
     return true;
   }
   const raw = headers.authorization;
-  const authorization = Array.isArray(raw) ? raw[0] : raw;
-  const token = authorization?.toLowerCase().startsWith("bearer ") ? authorization.slice(7).trim() : "";
+  const auth2 = Array.isArray(raw) ? raw[0] : raw;
+  const token = auth2?.toLowerCase().startsWith("bearer ") ? auth2.slice(7).trim() : "";
   if (!token) {
     return false;
   }
@@ -912,13 +912,13 @@ async function validateApiKey(headers: IncomingHttpHeaders, ctx: ProxyContext): 
 }
 
 // 4. Headers ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-const STRIPPED_REQUEST_HEADERS = new Set(["host", "authorization", "content-length"]);
+const STR_REQ_HDR = new Set(["host", "authorization", "content-length"]);
 
-function upstreamHeaders(headers: IncomingHttpHeaders, accessToken: string, accountId: string | null): Headers {
+function upstreamHeaders(headers: IncHttpHdrs, accessToken: string, accountId: string | null): Headers {
   const next = new Headers();
   for (const name in headers) {
     const value = headers[name];
-    if (value === undefined || STRIPPED_REQUEST_HEADERS.has(name.toLowerCase())) {
+    if (value === undefined || STR_REQ_HDR.has(name.toLowerCase())) {
       continue;
     }
     next.set(name, Array.isArray(value) ? value.join(", ") : `${value}`);
@@ -947,19 +947,19 @@ function requestPath(path: string): string {
 }
 
 // 5-2. Request intent ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
-function requestIntent(path: string, body: Buffer, headers: IncomingHttpHeaders): RequestIntent {
+function requestIntent(path: string, body: Buffer, headers: IncHttpHdrs): RequestIntent {
   const parsed = parseRequestJson(body, headers);
-  const requestedModel = extractRequestedModel(parsed);
+  const rqstMdl = extractRequestedModel(parsed);
   return {
     isModelsRequest: path === "/backend-api/codex/models" || path === "/v1/models",
-    requestedModel,
+    requestedModel: rqstMdl,
     reasoningEffort: extractReasoningEffort(parsed),
-    fallbackModel: requestedModel === PREFERRED_HIGH_CAPABILITY_MODEL ? FALLBACK_HIGH_CAPABILITY_MODEL : null,
+    fallbackModel: rqstMdl === PHCM ? FHCM : null,
   };
 }
 
 // 5-3. Request JSON parse ―――――――――――――――――――――――――――――――――――――――――――――――
-function parseRequestJson(body: Buffer, headers: IncomingHttpHeaders): Record<string, unknown> | null {
+function parseRequestJson(body: Buffer, headers: IncHttpHdrs): Record<string, unknown> | null {
   if (body.length === 0) {
     return null;
   }
@@ -972,7 +972,7 @@ function parseRequestJson(body: Buffer, headers: IncomingHttpHeaders): Record<st
 }
 
 // 5-4. Request body decode
-function decodeRequestBody(body: Buffer, headers: IncomingHttpHeaders): Buffer {
+function decodeRequestBody(body: Buffer, headers: IncHttpHdrs): Buffer {
   if (requestContentEncoding(headers) === "zstd") {
     return Buffer.from(bunCompression().zstdDecompressSync(body));
   }
@@ -980,7 +980,7 @@ function decodeRequestBody(body: Buffer, headers: IncomingHttpHeaders): Buffer {
 }
 
 // 5-5. Request body encode
-function encodeRequestBody(body: Buffer, headers: IncomingHttpHeaders): Buffer {
+function encodeRequestBody(body: Buffer, headers: IncHttpHdrs): Buffer {
   if (requestContentEncoding(headers) === "zstd") {
     return Buffer.from(bunCompression().zstdCompressSync(body));
   }
@@ -1005,7 +1005,7 @@ function bunCompression(): {
 }
 
 // 5-7. Request content encoding
-function requestContentEncoding(headers: IncomingHttpHeaders): string | null {
+function requestContentEncoding(headers: IncHttpHdrs): string | null {
   const raw = headers["content-encoding"];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return value === undefined ? null : value.trim().toLowerCase();
@@ -1023,7 +1023,7 @@ function extractReasoningEffort(parsed: Record<string, unknown> | null): string 
 }
 
 // 5-10. Request model rewrite ――――――――――――――――――――――――――――――――――――――――――――――――――
-function rewriteRequestModel(body: Buffer, headers: IncomingHttpHeaders, nextModel: string): Buffer | null {
+function rewriteRequestModel(body: Buffer, headers: IncHttpHdrs, nextModel: string): Buffer | null {
   const parsed = parseRequestJson(body, headers);
   if (parsed === null) {
     return null;
@@ -1064,7 +1064,7 @@ function collectModels(payload: Record<string, unknown>, target: Map<string, Rec
 }
 
 // 5-8. Unsupported model parse ―――――――――――――――――――――――――――――――――――――――――――――
-async function parseModelUnsupported(response: Response, requestedModel: string): Promise<AccountModelUnsupportedError | null> {
+async function parseModelUnsupported(response: Response, rqstMdl: string): Promise<AccountModelUnsupportedError | null> {
   if (response.status !== 400 && response.status !== 403) {
     return null;
   }
@@ -1080,14 +1080,14 @@ async function parseModelUnsupported(response: Response, requestedModel: string)
     return null;
   }
   const normalized = message.toLowerCase();
-  const modelText = requestedModel.toLowerCase();
+  const modelText = rqstMdl.toLowerCase();
   if (!normalized.includes(modelText)) {
     return null;
   }
   if (!normalized.includes("not supported") && code !== "model_not_supported") {
     return null;
   }
-  return new AccountModelUnsupportedError(requestedModel, message, code);
+  return new AccountModelUnsupportedError(rqstMdl, message, code);
 }
 
 // 5-9. Object value ―――――――――――――――――――――――――――――――――――――――――――――――――――――――
@@ -1101,10 +1101,10 @@ function stringValue(value: unknown): string | null {
 }
 
 // 6. Response pipe ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function pipeFetchResponse(response: Response, res: ServerResponse): Promise<void> {
+async function pipeFetchResponse(response: Response, res: SrvrRes): Promise<void> {
   res.statusCode = response.status;
   response.headers.forEach((value, key) => {
-    if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+    if (!STR_RES_HDR.has(key.toLowerCase())) {
       res.setHeader(key, value);
     }
   });
@@ -1124,7 +1124,7 @@ async function pipeFetchResponse(response: Response, res: ServerResponse): Promi
 }
 
 // 6-1. Response chunk write
-function writeResponseChunk(res: ServerResponse, chunk: Uint8Array): Promise<void> {
+function writeResponseChunk(res: SrvrRes, chunk: Uint8Array): Promise<void> {
   const written = res.write(Buffer.from(chunk));
   if (written) {
     return Promise.resolve();
@@ -1154,7 +1154,7 @@ function writeResponseChunk(res: ServerResponse, chunk: Uint8Array): Promise<voi
 }
 
 // 7. Body read ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+async function readBody(req: IncMsg, maxBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -1176,12 +1176,12 @@ async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer>
 
 // 8. Error JSON ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 // 8-1. OpenAI error
-export function openaiError(code: string, message: string, type: string): ProxyErrorPayload {
+export function openaiError(code: string, message: string, type: string): PrxyErrPyld {
   return { error: { code, message, type } };
 }
 
 // 8-2. JSON write
-export function writeJson(res: ServerResponse, status: number, payload: unknown): void {
+export function writeJson(res: SrvrRes, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.statusCode = status;
   res.setHeader("content-type", "application/json");

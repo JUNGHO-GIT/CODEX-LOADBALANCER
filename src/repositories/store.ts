@@ -2,7 +2,7 @@ import {copyFile, mkdir, readFile, rename, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
 import type {Account, ApiKey, StoreData, StoreMeta} from "../assets/type/domain/common.ts";
 
-export type Store = {
+export declare type Store = {
   path: string;
   read(): Promise<StoreData>;
   write(data: StoreData): Promise<void>;
@@ -60,11 +60,11 @@ export function createStore(path: string): Store {
     await flushing;
     flushing = null;
     if (dirty) {
-      scheduleFlush();
+      schedFlsh();
     }
   };
 
-  const scheduleFlush = (): void => {
+  const schedFlsh = (): void => {
     dirty = true;
     if (flushTimer !== null) {
       return;
@@ -80,7 +80,7 @@ export function createStore(path: string): Store {
     read: hydrate,
     write: async (data: StoreData) => {
       setCache(data);
-      scheduleFlush();
+      schedFlsh();
     },
     listAccounts: async () => {
       const data = await hydrate();
@@ -104,7 +104,7 @@ export function createStore(path: string): Store {
         accountIndex?.set(account.id, data.accounts.length);
         data.accounts.push(account);
       }
-      scheduleFlush();
+      schedFlsh();
       return account;
     },
     listApiKeys: async () => {
@@ -118,7 +118,7 @@ export function createStore(path: string): Store {
     setMeta: async (meta: StoreMeta) => {
       const data = await hydrate();
       data.meta = {...meta};
-      scheduleFlush();
+      schedFlsh();
       return {...data.meta};
     },
     flush: async () => {

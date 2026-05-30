@@ -1,6 +1,6 @@
-export type AccountStatus = "active" | "paused" | "rate_limited" | "quota_exceeded" | "deactivated";
+export declare type AccountStatus = "active" | "paused" | "rate_limited" | "quota_exceeded" | "deactivated";
 
-export type Account = {
+export declare type Account = {
   id: string;
   email: string | null;
   accessTokenEncrypted: string;
@@ -22,7 +22,7 @@ export type Account = {
   lastErrorAt: number | null;
 };
 
-export type ApiKey = {
+export declare type ApiKey = {
   id: string;
   name: string;
   tokenHash: string;
@@ -31,18 +31,18 @@ export type ApiKey = {
   assignedAccountIds: string[];
 };
 
-export type StoreMeta = {
+export declare type StoreMeta = {
   globalCooldownUntil: number | null;
   globalCooldownReason: string | null;
 };
 
-export type StoreData = {
+export declare type StoreData = {
   accounts: Account[];
   apiKeys: ApiKey[];
   meta: StoreMeta;
 };
 
-export type RuntimeSummary = {
+export declare type RuntimeSummary = {
   settings: {
     proxyRequestBudgetSeconds: number;
     proxyMaxBodyBytes: number;
@@ -78,7 +78,7 @@ export type RuntimeSummary = {
   };
 };
 
-export type TokenRefreshResult = {
+export declare type TokenRefreshResult = {
   accessToken: string;
   refreshToken: string;
   idToken: string;
@@ -87,7 +87,7 @@ export type TokenRefreshResult = {
   email: string | null;
 };
 
-export type UsagePayload = {
+export declare type UsagePayload = {
   plan_type?: string;
   rate_limit?: {
     primary_window?: UsageWindow | null;
@@ -95,14 +95,14 @@ export type UsagePayload = {
   } | null;
 };
 
-export type UsageWindow = {
+export declare type UsageWindow = {
   used_percent?: number | null;
   reset_at?: number | null;
   reset_after_seconds?: number | null;
   limit_window_seconds?: number | null;
 };
 
-export type ProxyErrorPayload = {
+export declare type ProxyErrorPayload = {
   error: {
     code: string;
     message: string;

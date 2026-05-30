@@ -3,8 +3,8 @@ import { decryptToken } from "../assets/scripts/crypto.ts";
 import { errorContext, type Logger } from "../assets/scripts/logger.ts";
 import type { Account, UsagePayload } from "../assets/type/domain/common.ts";
 import type { Store } from "../repositories/store.ts";
-import { applyAccountPlanPolicy, extractPlanType, FREE_PLAN_DEACTIVATION_REASON, isBalancerExcludedAccount, shouldReevaluateFreePlanAccount } from "./account-policy.ts";
-import { ensureFreshAccount, shouldRefresh } from "./auth.ts";
+import { applyAccountPlanPolicy as appAcPlPl, extractPlanType as extrPlnTyp, FPDR, isBalancerExcludedAccount as isBaExAc, shouldReevaluateFreePlanAccount as shlRvFrPlAc } from "./account-policy.ts";
+import { ensureFreshAccount as ensrFrshAcct, shouldRefresh as shldRfrs } from "./auth.ts";
 
 // 1. Usage fetch error ―――――――――――――――――――――――――――――――――――――――――――――――――――――
 export class UsageFetchError extends Error {
@@ -33,15 +33,15 @@ export async function fetchUsage(accessToken: string, accountId: string | null, 
   const response = await fetch(`${settings.upstreamBaseUrl.replace(/\/$/, "")}/usage`, { headers });
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
-    throw new UsageFetchError(response.status, extractMessage(payload) ?? `Usage fetch failed (${response.status})`, extractCode(payload), extractPlanType(payload));
+    throw new UsageFetchError(response.status, extractMessage(payload) ?? `Usage fetch failed (${response.status})`, extractCode(payload), extrPlnTyp(payload));
   }
   return payload as UsagePayload;
 }
 
 // 3. Usage apply ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-export async function refreshUsage(account: Account, store: Store, encryptionKey: Buffer, settings: Settings, logger?: Logger): Promise<Account> {
-  let current = await ensureFreshAccount(account, store, settings, encryptionKey, false, logger);
-  let accessToken = decryptToken(current.accessTokenEncrypted, encryptionKey);
+export async function refreshUsage(account: Account, store: Store, encrKy: Buffer, settings: Settings, logger?: Logger): Promise<Account> {
+  let current = await ensrFrshAcct(account, store, settings, encrKy, false, logger);
+  let accessToken = decryptToken(current.accessTokenEncrypted, encrKy);
   let payload: UsagePayload;
   try {
     payload = await fetchUsage(accessToken, current.chatgptAccountId, settings);
@@ -49,13 +49,13 @@ export async function refreshUsage(account: Account, store: Store, encryptionKey
     if (!shouldRetryUsage(error)) {
       throw error;
     }
-    current = await ensureFreshAccount(current, store, settings, encryptionKey, true, logger);
-    accessToken = decryptToken(current.accessTokenEncrypted, encryptionKey);
+    current = await ensrFrshAcct(current, store, settings, encrKy, true, logger);
+    accessToken = decryptToken(current.accessTokenEncrypted, encrKy);
     payload = await fetchUsage(accessToken, current.chatgptAccountId, settings);
   }
   const primary = payload.rate_limit?.primary_window;
   const secondary = payload.rate_limit?.secondary_window;
-  const updated = applyAccountPlanPolicy(
+  const updated = appAcPlPl(
     {
       ...current,
       planType: payload.plan_type ?? current.planType,
@@ -83,7 +83,7 @@ export async function refreshUsage(account: Account, store: Store, encryptionKey
 // 부팅 후 주기적으로 active 계정의 사용량 창(primary/secondary)을 갱신해
 // balancer가 정확한 usedPercent/resetAt을 기반으로 정렬할 수 있게 한다.
 // 실패는 warn 로그만 남기고 다음 tick으로 넘어간다.
-export type UsagePollingHandle = {
+export declare type UsagePollingHandle = {
   stop(): void;
 };
 
@@ -100,9 +100,9 @@ type UsagePollingPlan = {
   intervalRefreshCandidates: Account[];
 };
 
-export function startUsagePolling(store: Store, settings: Settings, encryptionKey: Buffer, logger: Logger): UsagePollingHandle {
+export function startUsagePolling(store: Store, settings: Settings, encrKy: Buffer, logger: Logger): UsagePollingHandle {
   const intervalMs = Math.max(60, settings.usagePollIntervalSeconds) * 1000;
-  const concurrencyLimit = Math.max(1, settings.usagePollConcurrency);
+  const cncrLmt = Math.max(1, settings.usagePollConcurrency);
   const jitterMs = Math.max(0, settings.usagePollJitterMs);
   const states = new Map<string, UsagePollingState>();
   let running = false;
@@ -123,15 +123,15 @@ export function startUsagePolling(store: Store, settings: Settings, encryptionKe
       });
       await runPollingStageBatches(
         plan.usageCandidates,
-        concurrencyLimit,
+        cncrLmt,
         () => stopped,
-        (account) => refreshUsageWithBackoff(account, store, encryptionKey, settings, logger, states, jitterMs),
+        (account) => refreshUsageWithBackoff(account, store, encrKy, settings, logger, states, jitterMs),
       );
       await runPollingStageBatches(
         plan.intervalRefreshCandidates,
-        concurrencyLimit,
+        cncrLmt,
         () => stopped,
-        (account) => refreshAccountIntervalWithBackoff(account, store, encryptionKey, settings, logger, states, jitterMs),
+        (account) => refreshAccountIntervalWithBackoff(account, store, encrKy, settings, logger, states, jitterMs),
       );
     } finally {
       running = false;
@@ -163,43 +163,43 @@ export function startUsagePolling(store: Store, settings: Settings, encryptionKe
 // 3-2. Usage polling plan build
 export function buildUsagePollingPlan(accounts: Account[], settings: Pick<Settings, "tokenRefreshIntervalDays">, states: ReadonlyMap<string, UsagePollingState>, now: number = Date.now()): UsagePollingPlan {
   const nowDate = new Date(now);
-  const usageCandidates: Account[] = [];
-  const intervalRefreshCandidates: Account[] = [];
+  const usgCndd: Account[] = [];
+  const intrRfrsCndd: Account[] = [];
   for (const account of accounts) {
     if ((states.get(account.id)?.nextAttemptAt ?? 0) > now) {
       continue;
     }
     if (isUsagePollingCandidate(account)) {
-      usageCandidates.push(account);
+      usgCndd.push(account);
       continue;
     }
     if (isIntervalRefreshCandidate(account, settings.tokenRefreshIntervalDays, nowDate)) {
-      intervalRefreshCandidates.push(account);
+      intrRfrsCndd.push(account);
     }
   }
   return {
-    usageCandidates,
-    intervalRefreshCandidates,
+    usageCandidates: usgCndd,
+    intervalRefreshCandidates: intrRfrsCndd,
   };
 }
 
 // 3-3. Usage polling candidate check
 export function isUsagePollingCandidate(account: Account): boolean {
-  return account.status === "active" && !isBalancerExcludedAccount(account);
+  return account.status === "active" && !isBaExAc(account);
 }
 
 // 3-4. Interval refresh candidate check
 export function isIntervalRefreshCandidate(account: Account, intervalDays: number, now: Date = new Date()): boolean {
-  if (!shouldReevaluateFreePlanAccount(account)) {
+  if (!shlRvFrPlAc(account)) {
     return false;
   }
   if (account.status === "paused") {
     return false;
   }
-  if (account.status === "deactivated" && account.deactivationReason !== FREE_PLAN_DEACTIVATION_REASON) {
+  if (account.status === "deactivated" && account.deactivationReason !== FPDR) {
     return false;
   }
-  return shouldRefresh(account, intervalDays, now);
+  return shldRfrs(account, intervalDays, now);
 }
 
 // 3-5. Polling stage batches run
@@ -217,9 +217,9 @@ async function runPollingStageBatches(accounts: Account[], size: number, isStopp
 }
 
 // 3-6. Usage refresh with backoff
-async function refreshUsageWithBackoff(account: Account, store: Store, encryptionKey: Buffer, settings: Settings, logger: Logger, states: Map<string, UsagePollingState>, jitterMs: number): Promise<void> {
+async function refreshUsageWithBackoff(account: Account, store: Store, encrKy: Buffer, settings: Settings, logger: Logger, states: Map<string, UsagePollingState>, jitterMs: number): Promise<void> {
   try {
-    await refreshUsage(account, store, encryptionKey, settings, logger);
+    await refreshUsage(account, store, encrKy, settings, logger);
     states.delete(account.id);
     logger.debug("usage_poll.updated", { accountId: account.id });
   } catch (error) {
@@ -242,9 +242,9 @@ async function refreshUsageWithBackoff(account: Account, store: Store, encryptio
 }
 
 // 3-7. Interval refresh with backoff
-async function refreshAccountIntervalWithBackoff(account: Account, store: Store, encryptionKey: Buffer, settings: Settings, logger: Logger, states: Map<string, UsagePollingState>, jitterMs: number): Promise<void> {
+async function refreshAccountIntervalWithBackoff(account: Account, store: Store, encrKy: Buffer, settings: Settings, logger: Logger, states: Map<string, UsagePollingState>, jitterMs: number): Promise<void> {
   try {
-    const refreshed = await ensureFreshAccount(account, store, settings, encryptionKey, false, logger);
+    const refreshed = await ensrFrshAcct(account, store, settings, encrKy, false, logger);
     states.delete(account.id);
     logger.debug("usage_poll.interval_refresh_updated", {
       accountId: account.id,

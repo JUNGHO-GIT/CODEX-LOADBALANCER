@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage as IncMsg, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { Settings } from "../src/assets/scripts/config.ts";
 import { createLogger } from "../src/assets/scripts/logger.ts";
 import { createStore } from "../src/repositories/store.ts";
-import { createLoadBalancerServer } from "../src/routers/server.ts";
-import { FREE_PLAN_DEACTIVATION_REASON } from "../src/services/account-policy.ts";
-import { createAccount } from "../src/services/auth.ts";
+import { createLoadBalancerServer as crtLdBalSrvr } from "../src/routers/server.ts";
+import { FPDR } from "../src/services/account-policy.ts";
+import { createAccount as crtAcct } from "../src/services/auth.ts";
 
 const servers: Server[] = [];
 
@@ -22,9 +22,9 @@ describe("proxy", () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
 			let authCalls = 0;
-			let upstreamAuthorization = "";
+			let upAuth = "";
 			const upstream = createServer((req, res) => {
-				upstreamAuthorization = req.headers.authorization ?? "";
+				upAuth = req.headers.authorization ?? "";
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end(JSON.stringify({ ok: true }));
 			});
@@ -38,7 +38,7 @@ describe("proxy", () => {
 			const key = Buffer.alloc(32, 1);
 			const store = createStore(join(root, "store.json"));
 			const account = {
-				...createAccount(
+				...crtAcct(
 					{
 						id: "account-a",
 						accessToken: "access-token",
@@ -50,7 +50,7 @@ describe("proxy", () => {
 				lastRefresh: "2026-01-01T00:00:00.000Z",
 			};
 			await store.upsertAccount(account);
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -70,7 +70,7 @@ describe("proxy", () => {
 
 			assert.equal(response.status, 200);
 			assert.equal(authCalls, 0);
-			assert.equal(upstreamAuthorization, "Bearer access-token");
+			assert.equal(upAuth, "Bearer access-token");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -100,7 +100,7 @@ describe("proxy", () => {
 			const key = Buffer.alloc(32, 1);
 			const store = createStore(join(root, "store.json"));
 			await store.upsertAccount({
-				...createAccount(
+				...crtAcct(
 					{
 						id: "account-a",
 						email: "alpha@example.com",
@@ -114,7 +114,7 @@ describe("proxy", () => {
 				usedPercent: 40,
 				secondaryUsedPercent: 70,
 			});
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -161,14 +161,14 @@ describe("proxy", () => {
 			let oldTokenHits = 0;
 			let newTokenHits = 0;
 			const upstream = createServer((req, res) => {
-				const authorization = req.headers.authorization ?? "";
-				if (authorization === "Bearer old-token") {
+				const auth2 = req.headers.authorization ?? "";
+				if (auth2 === "Bearer old-token") {
 					oldTokenHits += 1;
 					res.writeHead(401, { "content-type": "application/json" });
 					res.end(JSON.stringify({ error: "expired" }));
 					return;
 				}
-				if (authorization === "Bearer new-token") {
+				if (auth2 === "Bearer new-token") {
 					newTokenHits += 1;
 					res.writeHead(200, { "content-type": "application/json" });
 					res.end(JSON.stringify({
@@ -200,7 +200,7 @@ describe("proxy", () => {
 			const key = Buffer.alloc(32, 1);
 			const store = createStore(join(root, "store.json"));
 			await store.upsertAccount(testAccount("account-a", "old-token", key));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -232,11 +232,11 @@ describe("proxy", () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
 			let authCalls = 0;
-			const seenAuthorizations: string[] = [];
+			const snAthr: string[] = [];
 			const upstream = createServer((req, res) => {
-				const authorization = req.headers.authorization ?? "";
-				seenAuthorizations.push(authorization);
-				if (authorization === "Bearer old-token") {
+				const auth2 = req.headers.authorization ?? "";
+				snAthr.push(auth2);
+				if (auth2 === "Bearer old-token") {
 					res.writeHead(401, { "content-type": "application/json" });
 					res.end(JSON.stringify({ error: "expired" }));
 					return;
@@ -255,7 +255,7 @@ describe("proxy", () => {
 			const key = Buffer.alloc(32, 1);
 			const store = createStore(join(root, "store.json"));
 			await store.upsertAccount({
-				...createAccount(
+				...crtAcct(
 					{
 						id: "codex-auth-auth",
 						email: "auth@example.com",
@@ -283,7 +283,7 @@ describe("proxy", () => {
 				}),
 				"utf8",
 			);
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort, {
 					codexAuthDir: authFile,
 				}),
@@ -305,7 +305,7 @@ describe("proxy", () => {
 
 			assert.equal(response.status, 200);
 			assert.equal(authCalls, 0);
-			assert.deepEqual(seenAuthorizations, ["Bearer old-token", "Bearer new-token"]);
+			assert.deepEqual(snAthr, ["Bearer old-token", "Bearer new-token"]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -314,23 +314,23 @@ describe("proxy", () => {
 	it("skips accounts that reject a requested model and remembers that incompatibility", async () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
-			let unsupportedHits = 0;
-			let supportedHits = 0;
+			let unsupHts = 0;
+			let supHts = 0;
 			const upstream = createServer(async (req, res) => {
-				const authorization = req.headers.authorization ?? "";
+				const auth2 = req.headers.authorization ?? "";
 				const payload = JSON.parse((await readIncoming(req)).toString("utf8")) as {
 					model?: string;
 				};
-				if (authorization === "Bearer primary-token" && payload.model === "gpt-5.5") {
-					unsupportedHits += 1;
+				if (auth2 === "Bearer primary-token" && payload.model === "gpt-5.5") {
+					unsupHts += 1;
 					res.writeHead(400, { "content-type": "application/json" });
 					res.end(JSON.stringify({
 						detail: "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.",
 					}));
 					return;
 				}
-				if (authorization === "Bearer secondary-token") {
-					supportedHits += 1;
+				if (auth2 === "Bearer secondary-token") {
+					supHts += 1;
 					res.writeHead(200, { "content-type": "application/json" });
 					res.end(JSON.stringify({ account: "secondary" }));
 					return;
@@ -348,7 +348,7 @@ describe("proxy", () => {
 			const store = createStore(join(root, "store.json"));
 			await store.upsertAccount(testAccount("account-a", "primary-token", key));
 			await store.upsertAccount(testAccount("account-b", "secondary-token", key));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -378,8 +378,8 @@ describe("proxy", () => {
 			assert.equal(second.status, 200);
 			assert.deepEqual(firstBody, { account: "secondary" });
 			assert.deepEqual(secondBody, { account: "secondary" });
-			assert.equal(unsupportedHits, 1);
-			assert.equal(supportedHits, 2);
+			assert.equal(unsupHts, 1);
+			assert.equal(supHts, 2);
 			assert.deepEqual(primary?.unsupportedModelIds, ["gpt-5.5"]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -391,12 +391,12 @@ describe("proxy", () => {
 		try {
 			const seenModels: string[] = [];
 			const upstream = createServer(async (req, res) => {
-				const authorization = req.headers.authorization ?? "";
+				const auth2 = req.headers.authorization ?? "";
 				const payload = JSON.parse((await readIncoming(req)).toString("utf8")) as {
 					model?: string;
 				};
 				seenModels.push(payload.model ?? "missing");
-				if (authorization === "Bearer fallback-token" && payload.model === "gpt-5.4") {
+				if (auth2 === "Bearer fallback-token" && payload.model === "gpt-5.4") {
 					res.writeHead(200, { "content-type": "application/json" });
 					res.end(JSON.stringify({ account: "fallback", model: payload.model }));
 					return;
@@ -416,7 +416,7 @@ describe("proxy", () => {
 				...testAccount("account-a", "fallback-token", key),
 				supportedModelIds: ["gpt-5.4"],
 			});
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -447,8 +447,8 @@ describe("proxy", () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
 			const upstream = createServer((req, res) => {
-				const authorization = req.headers.authorization ?? "";
-				if (req.url === "/models" && authorization === "Bearer first-token") {
+				const auth2 = req.headers.authorization ?? "";
+				if (req.url === "/models" && auth2 === "Bearer first-token") {
 					res.writeHead(200, { "content-type": "application/json" });
 					res.end(JSON.stringify({
 						object: "list",
@@ -458,7 +458,7 @@ describe("proxy", () => {
 					}));
 					return;
 				}
-				if (req.url === "/models" && authorization === "Bearer second-token") {
+				if (req.url === "/models" && auth2 === "Bearer second-token") {
 					res.writeHead(200, { "content-type": "application/json" });
 					res.end(JSON.stringify({
 						object: "list",
@@ -482,7 +482,7 @@ describe("proxy", () => {
 			const store = createStore(join(root, "store.json"));
 			await store.upsertAccount(testAccount("account-a", "first-token", key));
 			await store.upsertAccount(testAccount("account-b", "second-token", key));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -526,7 +526,7 @@ describe("proxy", () => {
 			const authPort = await listen(auth);
 			const key = Buffer.alloc(32, 1);
 			const store = createStore(join(root, "store.json"));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort, {
 					autoDisableFreePlan: true,
 				}),
@@ -537,7 +537,7 @@ describe("proxy", () => {
 			});
 			const port = await listen(server);
 
-			const createResponse = await fetch(`http://127.0.0.1:${port}/api/accounts`, {
+			const crtRes = await fetch(`http://127.0.0.1:${port}/api/accounts`, {
 				method: "POST",
 				headers: {
 					connection: "close",
@@ -552,10 +552,10 @@ describe("proxy", () => {
 				}),
 			});
 			const accounts = await store.listAccounts();
-			const summaryResponse = await fetch(`http://127.0.0.1:${port}/api/runtime-summary`, {
+			const smmrRes = await fetch(`http://127.0.0.1:${port}/api/runtime-summary`, {
 				headers: { connection: "close" },
 			});
-			const summary = await summaryResponse.json() as {
+			const summary = await smmrRes.json() as {
 				settings: {
 					preferredHighCapabilityModel: string;
 					fallbackHighCapabilityModel: string;
@@ -565,10 +565,10 @@ describe("proxy", () => {
 				};
 			};
 
-			assert.equal(createResponse.status, 201);
+			assert.equal(crtRes.status, 201);
 			assert.equal(accounts[0]?.status, "deactivated");
-			assert.equal(accounts[0]?.deactivationReason, FREE_PLAN_DEACTIVATION_REASON);
-			assert.equal(summaryResponse.status, 200);
+			assert.equal(accounts[0]?.deactivationReason, FPDR);
+			assert.equal(smmrRes.status, 200);
 			assert.equal(summary.counts.autoDisabledFreeAccounts, 1);
 			assert.equal(summary.settings.preferredHighCapabilityModel, "gpt-5.5");
 			assert.equal(summary.settings.fallbackHighCapabilityModel, "gpt-5.4");
@@ -594,7 +594,7 @@ describe("proxy", () => {
 			const authPort = await listen(auth);
 			const key = Buffer.alloc(32, 1);
 			const store = createStore(join(root, "store.json"));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort, {
 					proxyMaxBodyBytes: 8,
 				}),
@@ -631,8 +631,8 @@ describe("proxy", () => {
 			let slowCalled = false;
 			let fastCalled = false;
 			const upstream = createServer((req, res) => {
-				const authorization = req.headers.authorization ?? "";
-				if (authorization === "Bearer primary-token") {
+				const auth2 = req.headers.authorization ?? "";
+				if (auth2 === "Bearer primary-token") {
 					res.writeHead(429, { "content-type": "application/json" });
 					res.end(
 						JSON.stringify({
@@ -644,7 +644,7 @@ describe("proxy", () => {
 					);
 					return;
 				}
-				if (authorization === "Bearer slow-token") {
+				if (auth2 === "Bearer slow-token") {
 					slowCalled = true;
 					setTimeout(() => {
 						if (!res.writableEnded) {
@@ -671,7 +671,7 @@ describe("proxy", () => {
 			await store.upsertAccount(testAccount("account-a", "primary-token", key));
 			await store.upsertAccount(testAccount("account-b", "slow-token", key));
 			await store.upsertAccount(testAccount("account-c", "fast-token", key));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -721,7 +721,7 @@ describe("proxy", () => {
 				globalCooldownUntil: Math.floor(Date.now() / 1000) + 300,
 				globalCooldownReason: "test_cooldown",
 			});
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort, {
 					globalCooldownEnabled: true,
 				}),
@@ -763,7 +763,7 @@ describe("proxy", () => {
 	it("short-circuits when global cooldown is active and shared reset is detected", async () => {
 		const root = await mkdtemp(join(tmpdir(), "codex-lb-proxy-"));
 		try {
-			const sharedResetAt = Math.floor(Date.now() / 1000) + 11_749;
+			const shrdRstAt = Math.floor(Date.now() / 1000) + 11_749;
 			let upstreamHits = 0;
 			const upstream = createServer((_req, res) => {
 				upstreamHits += 1;
@@ -772,7 +772,7 @@ describe("proxy", () => {
 					JSON.stringify({
 						error: {
 							type: "usage_limit_reached",
-							resets_at: sharedResetAt,
+							resets_at: shrdRstAt,
 							resets_in_seconds: 11_749,
 						},
 					}),
@@ -789,7 +789,7 @@ describe("proxy", () => {
 			await store.upsertAccount(testAccount("account-a", "a-token", key));
 			await store.upsertAccount(testAccount("account-b", "b-token", key));
 			await store.upsertAccount(testAccount("account-c", "c-token", key));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort, {
 					globalCooldownEnabled: true,
 				}),
@@ -810,10 +810,10 @@ describe("proxy", () => {
 			);
 			assert.equal(first.status, 429);
 			assert.ok(upstreamHits >= 2);
-			const hitsAfterFirst = upstreamHits;
+			const htsAftrFrst = upstreamHits;
 
 			const meta = await store.getMeta();
-			assert.equal(meta.globalCooldownUntil, sharedResetAt);
+			assert.equal(meta.globalCooldownUntil, shrdRstAt);
 			assert.equal(meta.globalCooldownReason, "shared_reset_epoch_detected");
 
 			const second = await fetch(
@@ -829,7 +829,7 @@ describe("proxy", () => {
 			};
 			assert.equal(second.status, 429);
 			assert.equal(body.error?.code, "usage_limit_reached");
-			assert.equal(upstreamHits, hitsAfterFirst);
+			assert.equal(upstreamHits, htsAftrFrst);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -860,7 +860,7 @@ describe("proxy", () => {
 			await store.upsertAccount(testAccount("account-a", "a-token", key));
 			await store.upsertAccount(testAccount("account-b", "b-token", key));
 			await store.upsertAccount(testAccount("account-c", "c-token", key));
-			const server = createLoadBalancerServer({
+			const server = crtLdBalSrvr({
 				settings: settings(root, upstreamPort, authPort),
 				encryptionKey: key,
 				store,
@@ -930,7 +930,7 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 // 2-2. Incoming read
-async function readIncoming(req: IncomingMessage): Promise<Buffer> {
+async function readIncoming(req: IncMsg): Promise<Buffer> {
 	const chunks: Buffer[] = [];
 	let total = 0;
 	for await (const chunk of req) {
@@ -978,7 +978,7 @@ function settings(
 
 // 4. Test account create ―――――――――――――――――――――――――――――――――――――――――――――――――――
 function testAccount(id: string, accessToken: string, key: Buffer) {
-	return createAccount(
+	return crtAcct(
 		{
 			id,
 			accessToken,

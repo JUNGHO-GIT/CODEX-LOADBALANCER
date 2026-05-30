@@ -4,7 +4,7 @@
   "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
   "publisher": "JUNGHO",
   "license": "Apache-2.0",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -45,8 +45,7 @@
     "git": "bun ~/.bootstrap/bootstrap-sync.ts --git",
     "swc": "bun ~/.bootstrap/bootstrap-sync.ts --swc",
     "sync": "bun ~/.bootstrap/bootstrap-sync.ts --sync",
-    "tools": "bun ~/.bootstrap/bootstrap-sync.ts --tools",
-    "verify": "tsc --noEmit"
+    "tools": "bun ~/.bootstrap/bootstrap-sync.ts --tools"
   },
   "engines": {
     "bun": ">=1.3.0"

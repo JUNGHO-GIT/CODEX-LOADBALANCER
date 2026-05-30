@@ -5,8 +5,8 @@ import {join} from "node:path";
 import {describe, it} from "node:test";
 import {decryptToken} from "../src/assets/scripts/crypto.ts";
 import {createStore} from "../src/repositories/store.ts";
-import {createAccount} from "../src/services/auth.ts";
-import {importCodexAuthDirectory} from "../src/services/codex-auth.ts";
+import {createAccount as crtAcct} from "../src/services/auth.ts";
+import {importCodexAuthDirectory as impCdAtDi} from "../src/services/codex-auth.ts";
 
 describe("codex auth import", () => {
   it("imports copied Codex auth files with stable account ids", async () => {
@@ -30,17 +30,17 @@ describe("codex auth import", () => {
       );
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
-      const imported = await importCodexAuthDirectory(authDir, store, key, false);
+      const imported = await impCdAtDi(authDir, store, key, false);
       const accounts = await store.listAccounts();
-      const secondImported = await importCodexAuthDirectory(authDir, store, key, false);
-      const secondAccounts = await store.listAccounts();
+      const scndImpr = await impCdAtDi(authDir, store, key, false);
+      const scndAccts = await store.listAccounts();
 
       assert.equal(imported, 1);
       assert.equal(accounts[0]?.id, "codex-auth-alpha");
       assert.equal(accounts[0]?.chatgptAccountId, "account-id");
       assert.equal(decryptToken(accounts[0].accessTokenEncrypted, key), "access-token");
-      assert.equal(secondImported, 1);
-      assert.equal(secondAccounts.length, 1);
+      assert.equal(scndImpr, 1);
+      assert.equal(scndAccts.length, 1);
     }
     finally {
       await rm(root, {recursive: true, force: true});
@@ -67,7 +67,7 @@ describe("codex auth import", () => {
       );
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
-      const imported = await importCodexAuthDirectory(authFile, store, key, false);
+      const imported = await impCdAtDi(authFile, store, key, false);
       const accounts = await store.listAccounts();
 
       assert.equal(imported, 1);
@@ -103,7 +103,7 @@ describe("codex auth import", () => {
       );
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
-      const imported = await importCodexAuthDirectory(authDir, store, key, false);
+      const imported = await impCdAtDi(authDir, store, key, false);
       const accounts = await store.listAccounts();
 
       assert.equal(imported, 1);
@@ -138,7 +138,7 @@ describe("codex auth import", () => {
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
       await store.upsertAccount({
-        ...createAccount({
+        ...crtAcct({
           id: "codex-auth-alpha",
           email: "alpha@example.com",
           accessToken: "access-token-new",
@@ -151,7 +151,7 @@ describe("codex auth import", () => {
         lastRefresh: "2026-04-26T00:00:00.000Z",
       });
 
-      await importCodexAuthDirectory(authDir, store, key, false);
+      await impCdAtDi(authDir, store, key, false);
       const account = (await store.listAccounts())[0];
 
       assert.equal(account?.id, "codex-auth-alpha");
@@ -186,7 +186,7 @@ describe("codex auth import", () => {
       const key = Buffer.alloc(32, 1);
       const store = createStore(join(root, "store.json"));
       await store.upsertAccount({
-        ...createAccount({
+        ...crtAcct({
           id: "codex-auth-alpha",
           email: "alpha@example.com",
           accessToken: "stale-access-token",
@@ -200,7 +200,7 @@ describe("codex auth import", () => {
         lastRefresh: "2026-04-24T00:00:00.000Z",
       });
 
-      await importCodexAuthDirectory(authDir, store, key, false);
+      await impCdAtDi(authDir, store, key, false);
       const account = (await store.listAccounts())[0];
 
       assert.equal(account?.status, "active");

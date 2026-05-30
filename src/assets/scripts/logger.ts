@@ -1,6 +1,6 @@
-export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
+export declare type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
-export type Logger = {
+export declare type Logger = {
   level: LogLevel;
   debug(event: string, context?: LogContext): void;
   info(event: string, context?: LogContext): void;
@@ -9,7 +9,7 @@ export type Logger = {
   child(context: LogContext): Logger;
 };
 
-export type LogContext = Record<string, unknown>;
+export declare type LogContext = Record<string, unknown>;
 
 type LogSink = {
   debug(line: string): void;
@@ -20,27 +20,31 @@ type LogSink = {
 };
 
 const LOG_CONFIG = {
-  debug: {
-    label: "DEBUG",
-    color: "[38;5;141m",
+  "line": {
+    "str": `―――――――――――――――――――――――――――――――――――――――――`,
+    "color": `\u001B[38;2;255;162;0m`,
   },
-  info: {
-    label: "INFO",
-    color: "[38;5;46m",
+  "debug": {
+    "str": `[D]`,
+    "color": `\u001B[38;5;141m`,
   },
-  warn: {
-    label: "WARN",
-    color: "[38;5;214m",
+  "info": {
+    "str": `[I]`,
+    "color": `\u001B[38;5;111m`,
   },
-  error: {
-    label: "ERROR",
-    color: "[38;5;196m",
+  "warn": {
+    "str": `[W]`,
+    "color": `\u001B[38;5;220m`,
+  },
+  "error": {
+    "str": `[E]`,
+    "color": `\u001B[38;5;196m`,
+  },
+  "reset": {
+    "str": ``,
+    "color": `\u001B[0m`,
   },
 } as const;
-
-const RESET_COLOR = "[0m";
-const SEPARATOR_COLOR = "[38;2;255;162;0m";
-const SEPARATOR_LINE = "―――――――――――――――――――――――――――――――――――――――――――――";
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
   debug: 10,
@@ -53,25 +57,25 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
 // 1. Logger create ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 export function createLogger(
   level: LogLevel,
-  defaultContext: LogContext = {},
+  defCtx: LogContext = {},
   sink: LogSink = console,
 ): Logger {
   const logger: Logger = {
     level,
     debug: (event: string, context: LogContext = {}) => {
-      writeLog("debug", event, level, defaultContext, context, sink);
+      writeLog("debug", event, level, defCtx, context, sink);
     },
     info: (event: string, context: LogContext = {}) => {
-      writeLog("info", event, level, defaultContext, context, sink);
+      writeLog("info", event, level, defCtx, context, sink);
     },
     warn: (event: string, context: LogContext = {}) => {
-      writeLog("warn", event, level, defaultContext, context, sink);
+      writeLog("warn", event, level, defCtx, context, sink);
     },
     error: (event: string, context: LogContext = {}) => {
-      writeLog("error", event, level, defaultContext, context, sink);
+      writeLog("error", event, level, defCtx, context, sink);
     },
     child: (context: LogContext) =>
-      createLogger(level, { ...defaultContext, ...context }, sink),
+      createLogger(level, { ...defCtx, ...context }, sink),
   };
   return logger;
 }
@@ -113,29 +117,34 @@ function writeLog(
   level: Exclude<LogLevel, "silent">,
   event: string,
   minimumLevel: LogLevel,
-  defaultContext: LogContext,
+  defCtx: LogContext,
   context: LogContext,
   sink: LogSink,
 ): void {
   if (LEVEL_WEIGHT[level] < LEVEL_WEIGHT[minimumLevel]) {
     return;
   }
+
   const cfg = LOG_CONFIG[level];
-  const separator = `${SEPARATOR_COLOR}${SEPARATOR_LINE}${RESET_COLOR}`;
-  const header = `${cfg.color}[${cfg.label} - ${event}]${RESET_COLOR}`;
-  const mergedContext = {
+  const separator = `${LOG_CONFIG.line.color}${LOG_CONFIG.line.str}${LOG_CONFIG.reset.color}`;
+  const header = `${cfg.color}${cfg.str}${LOG_CONFIG.reset.color} ${cfg.color}${event}${LOG_CONFIG.reset.color}`;
+  const mrgdCtx = {
     time: new Date().toISOString(),
-    ...sanitizeContext(defaultContext),
+    ...sanitizeContext(defCtx),
     ...sanitizeContext(context),
   };
-  const line = `${separator}\n${header}\n${formatContext(mergedContext, cfg.color)}`;
+  const line = `${separator}\n${header}\n${formatContext(mrgdCtx, cfg.color)}`;
+
   if (level === "debug") {
     sink.debug(line);
-  } else if (level === "info") {
+  }
+  else if (level === "info") {
     sink.info(line);
-  } else if (level === "warn") {
+  }
+  else if (level === "warn") {
     sink.warn(line);
-  } else {
+  }
+  else {
     sink.error(line);
   }
 }
@@ -147,7 +156,7 @@ function formatContext(context: LogContext, keyColor: string): string {
     if (value === null || value === undefined) {
       continue;
     }
-    const labeled = `${keyColor}- ${titleCaseKey(key)} :${RESET_COLOR}`;
+    const labeled = `${keyColor}- ${titleCaseKey(key)} :${LOG_CONFIG.reset.color}`;
     lines.push(`${labeled} ${formatValue(value)}`);
   }
   return lines.join("\n");
@@ -179,7 +188,8 @@ function sanitizeContext(context: LogContext): LogContext {
   for (const [key, value] of Object.entries(context)) {
     if (isSecretKey(key)) {
       sanitized[key] = "<redacted>";
-    } else {
+    }
+    else {
       sanitized[key] = value;
     }
   }

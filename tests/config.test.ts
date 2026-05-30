@@ -4,8 +4,8 @@ import { loadSettings } from "../src/assets/scripts/config.ts";
 
 describe("settings", () => {
   it("defaults network upstreams to chatgpt.com domains", () => {
-    const previousAuthBaseUrl = process.env.CODEX_LB_AUTH_BASE_URL;
-    const previousUpstreamBaseUrl = process.env.CODEX_LB_UPSTREAM_BASE_URL;
+    const prevAthBsUrl = process.env.CODEX_LB_AUTH_BASE_URL;
+    const prevUpBsUrl = process.env.CODEX_LB_UPSTREAM_BASE_URL;
     try {
       delete process.env.CODEX_LB_AUTH_BASE_URL;
       delete process.env.CODEX_LB_UPSTREAM_BASE_URL;
@@ -15,17 +15,17 @@ describe("settings", () => {
       assert.equal(settings.authBaseUrl, "https://chatgpt.com");
       assert.equal(settings.upstreamBaseUrl, "https://chatgpt.com/backend-api/codex");
     } finally {
-      if (previousAuthBaseUrl === undefined) {
+      if (prevAthBsUrl === undefined) {
         delete process.env.CODEX_LB_AUTH_BASE_URL;
       }
-      if (previousAuthBaseUrl !== undefined) {
-        process.env.CODEX_LB_AUTH_BASE_URL = previousAuthBaseUrl;
+      if (prevAthBsUrl !== undefined) {
+        process.env.CODEX_LB_AUTH_BASE_URL = prevAthBsUrl;
       }
-      if (previousUpstreamBaseUrl === undefined) {
+      if (prevUpBsUrl === undefined) {
         delete process.env.CODEX_LB_UPSTREAM_BASE_URL;
       }
-      if (previousUpstreamBaseUrl !== undefined) {
-        process.env.CODEX_LB_UPSTREAM_BASE_URL = previousUpstreamBaseUrl;
+      if (prevUpBsUrl !== undefined) {
+        process.env.CODEX_LB_UPSTREAM_BASE_URL = prevUpBsUrl;
       }
     }
   });
