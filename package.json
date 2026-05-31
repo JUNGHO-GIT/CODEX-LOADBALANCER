@@ -4,7 +4,7 @@
   "description": "Bun-based Codex/OpenAI-compatible proxy that rotates local ChatGPT account tokens",
   "publisher": "JUNGHO",
   "license": "Apache-2.0",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
